@@ -1,4 +1,23 @@
+# Environment and secrets
 .env
+
+# Python virtual environment
 venv/
+
+# Python cache
 __pycache__/
 *.pyc
+
+# Pytest cache
+.pytest_cache/
+
+# Local incident history
+data/incident_history.json
+
+# IDE / editor files
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
