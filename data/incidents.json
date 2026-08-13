@@ -1,0 +1,72 @@
+[
+  {
+    "incident_id": "INC-001",
+    "service": "Payment API",
+    "severity": "CRITICAL",
+    "error": "HTTP 503 Service Unavailable",
+    "symptoms": [
+      "Payment requests failing",
+      "Database connection pool exhausted",
+      "High request latency"
+    ],
+    "root_cause": "Database connection pool was too small for the traffic volume.",
+    "resolution": "Increased database connection pool from 50 to 100 and restarted the payment service.",
+    "outcome": "SUCCESS"
+  },
+  {
+    "incident_id": "INC-002",
+    "service": "User API",
+    "severity": "HIGH",
+    "error": "HTTP 504 Gateway Timeout",
+    "symptoms": [
+      "API requests timing out",
+      "Database queries taking too long",
+      "High response latency"
+    ],
+    "root_cause": "Slow database queries caused API requests to exceed the gateway timeout.",
+    "resolution": "Identified slow queries, added a missing database index, and restarted the service.",
+    "outcome": "SUCCESS"
+  },
+  {
+    "incident_id": "INC-003",
+    "service": "Redis Cache",
+    "severity": "HIGH",
+    "error": "Redis connection timeout",
+    "symptoms": [
+      "Cache requests failing",
+      "Increased API latency",
+      "Redis connections timing out"
+    ],
+    "root_cause": "Redis connection timeout was too aggressive during network congestion.",
+    "resolution": "Increased Redis connection timeout from 2 seconds to 5 seconds.",
+    "outcome": "SUCCESS"
+  },
+  {
+    "incident_id": "INC-004",
+    "service": "Payment API",
+    "severity": "CRITICAL",
+    "error": "HTTP 503 Service Unavailable",
+    "symptoms": [
+      "Payment requests failing",
+      "Database connection errors",
+      "Connection pool utilization at 100%"
+    ],
+    "root_cause": "Database connection pool exhaustion caused the payment service to reject requests.",
+    "resolution": "Increased database connection pool from 50 to 100.",
+    "outcome": "SUCCESS"
+  },
+  {
+    "incident_id": "INC-005",
+    "service": "Authentication Service",
+    "severity": "HIGH",
+    "error": "Authentication requests timing out",
+    "symptoms": [
+      "Login failures",
+      "High authentication latency",
+      "CPU utilization above 95%"
+    ],
+    "root_cause": "Authentication service CPU usage reached saturation because of excessive concurrent requests.",
+    "resolution": "Scaled the authentication service from 2 to 4 instances.",
+    "outcome": "SUCCESS"
+  }
+]
