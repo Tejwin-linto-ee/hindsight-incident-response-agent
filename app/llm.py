@@ -264,19 +264,29 @@ Return ONLY valid JSON.
         if not content:
             raise ValueError("OpenRouter returned empty response.")
 
+        clean_text = content.strip()
+        # Strip markdown fences if present
+        if clean_text.startswith("```"):
+            clean_text = re.sub(r"^```(?:json)?\s*", "", clean_text, flags=re.IGNORECASE)
+            clean_text = re.sub(r"\s*```$", "", clean_text)
+        
+        # Try direct parse
         try:
-            data = json.loads(content)
+            data = json.loads(clean_text)
         except json.JSONDecodeError:
-            # Extract JSON block using regex if wrapped in markdown
-            match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
-            if match:
-                data = json.loads(match.group(1))
+            # Locate the outermost JSON object bounds
+            first_brace = clean_text.find("{")
+            last_brace = clean_text.rfind("}")
+            if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+                json_str = clean_text[first_brace : last_brace + 1]
+                try:
+                    data = json.loads(json_str)
+                except json.JSONDecodeError:
+                    # Clean up common JSON syntax issues like trailing commas or unescaped newlines
+                    json_str_cleaned = re.sub(r",\s*([\]}])", r"\1", json_str)
+                    data = json.loads(json_str_cleaned)
             else:
-                match2 = re.search(r"(\{.*\})", content, re.DOTALL)
-                if match2:
-                    data = json.loads(match2.group(1))
-                else:
-                    raise
+                raise ValueError(f"Could not parse valid JSON from model response: {content[:300]}...")
 
         # Normalize required fields
         data["severity"] = self._normalize_severity(data.get("severity"))
