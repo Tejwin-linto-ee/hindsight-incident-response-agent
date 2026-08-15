@@ -666,6 +666,9 @@ for key, default in [
     ("simulation_mode", "healthy"),
     ("prediction", None),
     ("investigation_result", None),
+    ("sre_copilot_messages", []),
+    ("webhook_url", ""),
+    ("chaos_active", None),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -1175,55 +1178,100 @@ st.markdown(f"""
 # ============================================================
 
 st.markdown("""
-<div class="eyebrow">Telemetry Control</div>
-<div class="section-title" style="font-size:1.3rem; margin-bottom:0.25rem;">📡 Live System Telemetry Stream</div>
+<div class="eyebrow">Telemetry & Chaos Control</div>
+<div class="section-title" style="font-size:1.3rem; margin-bottom:0.25rem;">📡 Live Telemetry & Chaos Fault Injector</div>
 <div class="section-desc">
-    Synthesize fault injection scenarios across 11 critical infrastructure dimensions. 
-    Connect to production collectors (Prometheus, Grafana, Datadog) by replacing the simulator.
+    Stream continuous telemetry baseline or inject automated Chaos Engineering experiments to stress-test the ML anomaly detector.
 </div>
 """, unsafe_allow_html=True)
 
-c1, c2, c3 = st.columns([2.8, 1.6, 0.9], gap="small")
+from app.chaos_engine import ChaosEngine
 
-SCENARIOS = {
-    "healthy":  "🟢 Healthy Baseline — All Nominal",
-    "database": "🔴 Database Pool Exhaustion",
-    "cpu":      "🔴 CPU Saturation > 95%",
-    "memory":   "🔴 Memory Exhaustion (OOM Risk)",
-    "network":  "🔴 Network Congestion & High Latency",
-    "api":      "🔴 API Availability Degradation",
-}
+tab_std_sim, tab_chaos_sim = st.tabs(["📡 Standard Telemetry Stream", "💥 Chaos Fault Injection Lab"])
 
-with c1:
-    scenario = st.selectbox(
-        "Scenario",
-        list(SCENARIOS.keys()),
-        format_func=lambda x: SCENARIOS[x],
-        index=list(SCENARIOS.keys()).index(st.session_state.simulation_mode),
-        label_visibility="collapsed",
-    )
+with tab_std_sim:
+    c1, c2, c3 = st.columns([2.8, 1.6, 0.9], gap="small")
 
-with c2:
-    start_sim = st.button("▶  Start / Restart Stream", type="primary", use_container_width=True)
+    SCENARIOS = {
+        "healthy":  "🟢 Healthy Baseline — All Nominal",
+        "database": "🔴 Database Pool Exhaustion",
+        "cpu":      "🔴 CPU Saturation > 95%",
+        "memory":   "🔴 Memory Exhaustion (OOM Risk)",
+        "network":  "🔴 Network Congestion & High Latency",
+        "api":      "🔴 API Availability Degradation",
+    }
 
-with c3:
-    stop_sim = st.button("■  Stop", use_container_width=True)
+    with c1:
+        scenario = st.selectbox(
+            "Scenario",
+            list(SCENARIOS.keys()),
+            format_func=lambda x: SCENARIOS[x],
+            index=list(SCENARIOS.keys()).index(st.session_state.simulation_mode) if st.session_state.simulation_mode in SCENARIOS else 0,
+            label_visibility="collapsed",
+            key="std_scenario_sel",
+        )
 
-if start_sim:
-    st.session_state.simulation_mode = scenario
-    try:
-        st.session_state.telemetry = st.session_state.telemetry_manager.start(scenario)
-        st.session_state.simulation_running = True
-        st.session_state.prediction = None
-    except Exception as e:
-        st.error(f"Unable to start simulation: {e}")
+    with c2:
+        start_sim = st.button("▶  Start / Restart Stream", type="primary", use_container_width=True, key="btn_start_stream")
 
-if stop_sim:
-    try:
-        st.session_state.telemetry_manager.stop()
-    except Exception:
-        pass
-    st.session_state.simulation_running = False
+    with c3:
+        stop_sim = st.button("■  Stop", use_container_width=True, key="btn_stop_stream")
+
+    if start_sim:
+        st.session_state.simulation_mode = scenario
+        st.session_state.chaos_active = None
+        try:
+            st.session_state.telemetry = st.session_state.telemetry_manager.start(scenario)
+            st.session_state.simulation_running = True
+            st.session_state.prediction = None
+        except Exception as e:
+            st.error(f"Unable to start simulation: {e}")
+
+    if stop_sim:
+        try:
+            st.session_state.telemetry_manager.stop()
+        except Exception:
+            pass
+        st.session_state.simulation_running = False
+        st.session_state.chaos_active = None
+
+with tab_chaos_sim:
+    all_chaos = ChaosEngine.get_all_scenarios()
+    ch_col1, ch_col2 = st.columns([2.5, 1.5], gap="medium")
+
+    with ch_col1:
+        selected_chaos_id = st.selectbox(
+            "Chaos Experiment Scenario",
+            [s.id for s in all_chaos],
+            format_func=lambda sid: ChaosEngine.get_scenario(sid).name if ChaosEngine.get_scenario(sid) else sid,
+            key="chaos_exp_sel",
+        )
+        current_chaos = ChaosEngine.get_scenario(selected_chaos_id)
+        if current_chaos:
+            st.caption(f"🎯 **Target Service:** `{current_chaos.target_service}` &nbsp;|&nbsp; **Expected Type:** `{current_chaos.expected_failure_type}`")
+            st.markdown(f"<div style='font-size:0.8rem; color:#94A3B8; margin-bottom:0.5rem;'>{current_chaos.description}</div>", unsafe_allow_html=True)
+
+    with ch_col2:
+        st.write("")
+        if st.button("💥  Inject Chaos Fault & Trigger Triage", type="primary", use_container_width=True, key="btn_inject_chaos"):
+            if current_chaos:
+                st.session_state.simulation_running = False
+                st.session_state.chaos_active = current_chaos.id
+                # Inject the peak failure step
+                peak_metrics = current_chaos.steps[-1]
+                st.session_state.telemetry = dict(peak_metrics)
+                if predictor_available and predictor:
+                    st.session_state.prediction = predictor.predict(st.session_state.telemetry)
+                
+                # Security audit log
+                SecurityManager.log_event(
+                    event_type="CHAOS_EXPERIMENT_INJECTED",
+                    actor=current_user.get("username", "anonymous"),
+                    details=f"Injected chaos: {current_chaos.name} on {current_chaos.target_service}",
+                    status="SUCCESS"
+                )
+                st.success(f"⚡ Injected fault: {current_chaos.name} — Metrics pushed to ML engine!")
+                st.rerun()
 
 if st.session_state.simulation_running:
     try:
@@ -1666,58 +1714,236 @@ if result:
     # ========================================================
 
     st.markdown('<div style="margin-top:1.5rem;"></div>', unsafe_allow_html=True)
-    st.markdown("""
-    <div class="eyebrow">Human-in-the-Loop</div>
-    <div class="section-title" style="font-size:1.2rem; margin-bottom:0.25rem;">👨‍🔧 Engineer Review & Continuous Learning</div>
-    <div class="section-desc">
-        Confirm the actual production fix. Your response trains Hindsight to improve future automated recommendations.
-    </div>
-    """, unsafe_allow_html=True)
+    # ========================================================
+    # SRE PLATFORM COMMAND TABS
+    # ========================================================
 
-    st.markdown('<div class="review-panel">', unsafe_allow_html=True)
+    tab_review, tab_runbook, tab_postmortem, tab_chat, tab_alerts = st.tabs([
+        "👨‍🔧 Engineer Review & Learning",
+        "⚡ Actionable Runbooks & CLI",
+        "📑 Executive Postmortem (RCA)",
+        "💬 Interactive SRE Copilot Chat",
+        "📢 Real-Time Alert Dispatcher",
+    ])
 
-    helpful = st.radio(
-        "Was the AI recommendation accurate?",
-        ["✅ Helpful — Accurate diagnosis & actions", "❌ Not Helpful — Missed the root cause"],
-        horizontal=True,
-    )
+    # 1. ENGINEER REVIEW & CONTINUOUS LEARNING TAB
+    with tab_review:
+        st.markdown("""
+        <div class="eyebrow">Human-in-the-Loop</div>
+        <div class="section-title" style="font-size:1.1rem; margin-bottom:0.25rem;">Confirm Fix & Ingest to Hindsight</div>
+        <div class="section-desc">
+            Confirm the actual production fix. Your response trains Hindsight to improve future automated recommendations.
+        </div>
+        """, unsafe_allow_html=True)
 
-    resolution = st.text_area(
-        "Confirmed Resolution",
-        placeholder="Describe the actual technical fix applied in production by the on-call engineer...",
-        height=90,
-        label_visibility="visible",
-    )
+        st.markdown('<div class="review-panel">', unsafe_allow_html=True)
 
-    if st.button("📚  Commit Resolution to Hindsight Memory", type="primary", use_container_width=True):
-        if not resolution.strip():
-            st.warning("Enter the confirmed resolution before saving.")
-        elif not incident_id:
-            st.error("Missing incident ID.")
-        else:
-            try:
-                from app.agent import IncidentResponseAgent
-                review_agent = IncidentResponseAgent()
-                with st.spinner("Persisting confirmed resolution into Hindsight organizational memory..."):
-                    review_agent.record_resolution(
-                        incident_id=incident_id,
-                        helpful=("Helpful" in helpful),
-                        resolution=resolution,
-                    )
+        helpful = st.radio(
+            "Was the AI recommendation accurate?",
+            ["✅ Helpful — Accurate diagnosis & actions", "❌ Not Helpful — Missed the root cause"],
+            horizontal=True,
+            key="helpful_radio",
+        )
+
+        resolution = st.text_area(
+            "Confirmed Resolution",
+            placeholder="Describe the actual technical fix applied in production by the on-call engineer...",
+            height=90,
+            label_visibility="visible",
+            key="res_input_text",
+        )
+
+        if st.button("📚  Commit Resolution to Hindsight Memory", type="primary", use_container_width=True, key="btn_save_res"):
+            if not resolution.strip():
+                st.warning("Enter the confirmed resolution before saving.")
+            elif not incident_id:
+                st.error("Missing incident ID.")
+            else:
                 try:
-                    review_agent.close()
-                except Exception:
-                    pass
-                st.success("✅ Confirmed resolution persisted. Hindsight has learned from this incident.")
-                st.rerun()
-            except Exception as e:
-                msg = str(e)
-                if "hindsight" in msg.lower() or "HINDSIGHT" in msg:
-                    st.error(f"⚠️ Hindsight unavailable: {msg}")
-                else:
-                    st.error(f"⚠️ Unable to save review: {msg}")
+                    from app.agent import IncidentResponseAgent
+                    review_agent = IncidentResponseAgent()
+                    with st.spinner("Persisting confirmed resolution into Hindsight organizational memory..."):
+                        review_agent.record_resolution(
+                            incident_id=incident_id,
+                            helpful=("Helpful" in helpful),
+                            resolution=resolution,
+                        )
+                    try:
+                        review_agent.close()
+                    except Exception:
+                        pass
+                    st.success("✅ Confirmed resolution persisted. Hindsight has learned from this incident.")
+                    st.rerun()
+                except Exception as e:
+                    msg = str(e)
+                    if "hindsight" in msg.lower() or "HINDSIGHT" in msg:
+                        st.error(f"⚠️ Hindsight unavailable: {msg}")
+                    else:
+                        st.error(f"⚠️ Unable to save review: {msg}")
 
-    st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # 2. ACTIONABLE RUNBOOKS & CLI SCRIPTS TAB
+    with tab_runbook:
+        from app.runbook_generator import RunbookGenerator
+        runbook = result.get("runbook") or RunbookGenerator.generate_runbook(analysis, telemetry=result.get("telemetry"))
+
+        st.markdown(f"""
+        <div style="margin-bottom:1rem;">
+            <div style="font-size:0.75rem; font-weight:800; color:#5EEAD4; text-transform:uppercase; letter-spacing:0.08em;">Auto-Generated Production Runbook</div>
+            <div style="font-size:1.15rem; font-weight:700; color:#FFFFFF;">Target Service: <code>{runbook.get('service', 'app')}</code> ({runbook.get('severity', 'P2')})</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("#### 🚀 Execution Sequence")
+        for cmd_item in runbook.get("commands", []):
+            with st.expander(f"📌 {cmd_item.get('title', 'Command')}", expanded=True):
+                st.caption(cmd_item.get("description", ""))
+                st.code(cmd_item.get("command", ""), language=cmd_item.get("type", "bash"))
+
+        col_rb1, col_rb2 = st.columns(2, gap="medium")
+        with col_rb1:
+            st.markdown("#### 🛡️ Pre-Flight Safety Checks")
+            for sc in runbook.get("safety_checks", []):
+                st.markdown(f"- ⚠️ {sc}")
+
+        with col_rb2:
+            st.markdown("#### 🔍 Post-Remediation Verification")
+            for vs in runbook.get("verification_steps", []):
+                st.markdown(f"- ✅ {vs}")
+
+        if runbook.get("rollback_commands"):
+            with st.expander("🔄 Emergency Rollback Procedure"):
+                for rb in runbook.get("rollback_commands", []):
+                    st.markdown(f"**{rb.get('title', 'Rollback')}** — {rb.get('description', '')}")
+                    st.code(rb.get("command", ""), language="bash")
+
+    # 3. EXECUTIVE POSTMORTEM (RCA) EXPORTER TAB
+    with tab_postmortem:
+        from app.postmortem_exporter import PostmortemExporter
+        inc_raw_text = result.get("incident", incident_text)
+        current_telemetry = result.get("telemetry")
+        current_author = user_info.get("username", "admin")
+
+        postmortem_md = PostmortemExporter.generate_markdown(
+            analysis=analysis,
+            incident_text=inc_raw_text,
+            telemetry=current_telemetry,
+            incident_id=incident_id,
+            author=f"{current_author} ({user_info.get('role', 'SRE')})",
+        )
+        postmortem_json = PostmortemExporter.generate_json(
+            analysis=analysis,
+            incident_text=inc_raw_text,
+            telemetry=current_telemetry,
+            incident_id=incident_id,
+        )
+
+        st.markdown("""
+        <div style="margin-bottom:1rem;">
+            <div style="font-size:0.75rem; font-weight:800; color:#5EEAD4; text-transform:uppercase; letter-spacing:0.08em;">Formal Incident Postmortem & Five-Whys RCA</div>
+            <div style="font-size:1.15rem; font-weight:700; color:#FFFFFF;">Export Ready Document for Jira, Confluence, and Leadership</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        d_col1, d_col2 = st.columns(2)
+        with d_col1:
+            st.download_button(
+                label="📥 Download Postmortem (Markdown .md)",
+                data=postmortem_md,
+                file_name=f"postmortem_{incident_id or 'incident'}.md",
+                mime="text/markdown",
+                use_container_width=True,
+                type="primary",
+            )
+        with d_col2:
+            st.download_button(
+                label="📥 Download Full Incident Data (JSON)",
+                data=postmortem_json,
+                file_name=f"incident_{incident_id or 'incident'}.json",
+                mime="application/json",
+                use_container_width=True,
+            )
+
+        with st.expander("👀 Preview Generated Postmortem Markdown", expanded=False):
+            st.markdown(postmortem_md)
+
+    # 4. INTERACTIVE SRE COPILOT CHAT TAB
+    with tab_chat:
+        st.markdown("""
+        <div style="margin-bottom:0.75rem;">
+            <div style="font-size:0.75rem; font-weight:800; color:#5EEAD4; text-transform:uppercase; letter-spacing:0.08em;">Live SRE Copilot Chat</div>
+            <div style="font-size:1.15rem; font-weight:700; color:#FFFFFF;">Ask Follow-Up Questions to Kimi K2</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        from app.sre_chat import SRECopilot
+        if "sre_copilot_instance" not in st.session_state:
+            st.session_state.sre_copilot_instance = SRECopilot()
+
+        copilot = st.session_state.sre_copilot_instance
+
+        for msg in st.session_state.sre_copilot_messages:
+            role_icon = "👤" if msg["role"] == "user" else "🤖"
+            role_color = "#94A3B8" if msg["role"] == "user" else "#5EEAD4"
+            st.markdown(f"""
+            <div style="background:rgba(15,23,42,0.7); border:1px solid rgba(255,255,255,0.06); border-radius:8px; padding:0.65rem 0.9rem; margin-bottom:0.5rem;">
+                <div style="font-size:0.72rem; font-weight:700; color:{role_color}; margin-bottom:0.25rem;">{role_icon} {msg['role'].upper()}</div>
+                <div style="font-size:0.85rem; color:#E2E8F0; white-space:pre-wrap;">{msg['content']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        user_q = st.text_input("Ask Copilot about trade-offs, alternative fixes, or historical precedents...", key="copilot_q_input")
+        c_ask1, c_ask2 = st.columns([4, 1])
+        with c_ask2:
+            if st.button("💬 Send", use_container_width=True, key="btn_send_copilot"):
+                if user_q.strip():
+                    st.session_state.sre_copilot_messages.append({"role": "user", "content": user_q.strip()})
+                    with st.spinner("Copilot analyzing context..."):
+                        reply = copilot.ask(user_q, incident_context=analysis)
+                        st.session_state.sre_copilot_messages.append({"role": "assistant", "content": reply})
+                    st.rerun()
+
+    # 5. REAL-TIME ALERT DISPATCHER TAB
+    with tab_alerts:
+        from app.alert_dispatcher import AlertDispatcher
+
+        st.markdown("""
+        <div style="margin-bottom:0.75rem;">
+            <div style="font-size:0.75rem; font-weight:800; color:#5EEAD4; text-transform:uppercase; letter-spacing:0.08em;">Real-Time Notification Dispatcher</div>
+            <div style="font-size:1.15rem; font-weight:700; color:#FFFFFF;">Send Incident Card to Slack, Teams, or PagerDuty</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        wh_url = st.text_input("Webhook URL (Slack / Teams / Discord / Generic)", value=st.session_state.webhook_url, placeholder="https://hooks.slack.com/services/...", key="wh_url_input")
+        st.session_state.webhook_url = wh_url
+
+        target_platform = st.selectbox("Platform Format", ["Slack Block Kit", "Microsoft Teams MessageCard", "Generic JSON Payload"])
+
+        if st.button("📢  Dispatch Alert Now", type="primary", use_container_width=True, key="btn_dispatch_alert"):
+            if not wh_url.strip():
+                st.warning("Please provide a valid webhook URL.")
+            else:
+                if target_platform == "Slack Block Kit":
+                    payload = AlertDispatcher.format_slack_card(analysis, incident_id=incident_id)
+                elif target_platform == "Microsoft Teams MessageCard":
+                    payload = AlertDispatcher.format_teams_card(analysis, incident_id=incident_id)
+                else:
+                    payload = {"incident_id": incident_id, "analysis": analysis, "telemetry": result.get("telemetry")}
+
+                with st.spinner("Dispatching webhook alert..."):
+                    res = AlertDispatcher.dispatch(wh_url, payload)
+
+                if res.get("success"):
+                    st.success(f"✅ Alert successfully sent to {target_platform}!")
+                    SecurityManager.log_event(
+                        event_type="ALERT_DISPATCHED",
+                        actor=user_info.get("username", "admin"),
+                        details=f"Dispatched {target_platform} alert for {incident_id}",
+                        status="SUCCESS"
+                    )
+                else:
+                    st.error(f"❌ Webhook dispatch failed: {res.get('error')}")
 
 
 # ============================================================

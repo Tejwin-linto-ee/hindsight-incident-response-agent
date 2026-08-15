@@ -13,17 +13,20 @@ load_dotenv()
 
 class IncidentLLM:
     """
-    Next-Generation AI Incident Reasoning & Triage Engine.
+    Next-Generation Multi-Model SRE Incident Reasoning & Copilot Engine.
     
-    Inputs:
-    1. Current production incident & telemetry context
-    2. Structured, multi-faceted historical memories from Hindsight
-    3. Machine-learning failure prediction with Explainable AI attribution
-    
-    Output:
-    - Structured, validated incident analysis with hypothesis evaluation,
-      evidence correlation, immediate containment, and long-term prevention.
+    Features:
+    - Primary: Moonshot AI Kimi K2 via OpenRouter (Ultra-deep reasoning)
+    - Automated Resilient Failover: OpenRouter Meta-Llama 3.3 70B / DeepSeek -> Native Groq
+    - Schema Validation & Normalized Field Sanitization
+    - Multi-Turn Interactive SRE Copilot Chat
     """
+
+    FALLBACK_MODELS = [
+        "moonshotai/kimi-k2",
+        "meta-llama/llama-3.3-70b-instruct",
+        "deepseek/deepseek-chat",
+    ]
 
     def __init__(
         self,
@@ -33,20 +36,32 @@ class IncidentLLM:
         max_memories: int = 8,
         max_memory_chars: int = 4000,
     ) -> None:
-        api_key = os.getenv("OPENROUTER_API_KEY")
-        if not api_key:
+        self.openrouter_key = os.getenv("OPENROUTER_API_KEY")
+        self.groq_key = os.getenv("GROQ_API_KEY")
+
+        if not self.openrouter_key and not self.groq_key:
             raise ValueError(
-                "OPENROUTER_API_KEY was not found.\n"
-                "Get a free key at https://openrouter.ai/keys\n"
-                "Then add to your .env file: OPENROUTER_API_KEY=your_key_here"
+                "Neither OPENROUTER_API_KEY nor GROQ_API_KEY was found.\n"
+                "Please configure at least one in your .env file."
             )
 
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url="https://openrouter.ai/api/v1",
-            timeout=timeout_seconds,
-            max_retries=max_retries,
-        )
+        self.client = None
+        if self.openrouter_key:
+            self.client = OpenAI(
+                api_key=self.openrouter_key,
+                base_url="https://openrouter.ai/api/v1",
+                timeout=timeout_seconds,
+                max_retries=max_retries,
+            )
+
+        self.groq_client = None
+        if self.groq_key:
+            try:
+                from groq import Groq
+                self.groq_client = Groq(api_key=self.groq_key, timeout=timeout_seconds)
+            except Exception:
+                self.groq_client = None
+
         self.model = model
         self.max_memories = max_memories
         self.max_memory_chars = max_memory_chars
@@ -151,6 +166,63 @@ class IncidentLLM:
             return default
 
     # ========================================================
+    # RESILIENT LLM DISPATCH WITH FAILOVER
+    # ========================================================
+
+    def _execute_completion(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.1,
+        max_tokens: int = 2500,
+    ) -> str:
+        """
+        Attempts completions across model hierarchy with automated failover.
+        """
+        errors = []
+
+        # 1. Try OpenRouter model list
+        if self.client:
+            candidate_models = [self.model] + [m for m in self.FALLBACK_MODELS if m != self.model]
+            for candidate in candidate_models:
+                try:
+                    response = self.client.chat.completions.create(
+                        model=candidate,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                    content = response.choices[0].message.content
+                    if content and content.strip():
+                        return content
+                except Exception as exc:
+                    errors.append(f"OpenRouter [{candidate}]: {exc}")
+                    continue
+
+        # 2. Try Native Groq fallback
+        if self.groq_client:
+            try:
+                response = self.groq_client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+                content = response.choices[0].message.content
+                if content and content.strip():
+                    return content
+            except Exception as groq_exc:
+                errors.append(f"Groq [llama-3.3-70b-versatile]: {groq_exc}")
+
+        raise RuntimeError(f"All LLM completion attempts failed:\n" + "\n".join(errors))
+
+    # ========================================================
     # MAIN ANALYZE METHOD
     # ========================================================
 
@@ -247,22 +319,12 @@ Return a single JSON object with EXACTLY these fields:
 Return ONLY valid JSON.
 """
 
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.1,
-                max_tokens=2500,
-            )
-        except Exception as exc:
-            raise RuntimeError(f"OpenRouter API request failed: {type(exc).__name__}: {exc}") from exc
-
-        content = response.choices[0].message.content
-        if not content:
-            raise ValueError("OpenRouter returned empty response.")
+        content = self._execute_completion(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.1,
+            max_tokens=2500,
+        )
 
         clean_text = content.strip()
         # Strip markdown fences if present
@@ -311,3 +373,44 @@ Return ONLY valid JSON.
             data["failure_prediction"] = prediction
 
         return data
+
+    # ========================================================
+    # INTERACTIVE SRE COPILOT CHAT
+    # ========================================================
+
+    def chat_reply(
+        self,
+        messages: list[dict[str, str]],
+        incident_context: dict[str, Any] | None = None,
+    ) -> str:
+        """
+        Responds to conversational queries from the SRE during an active outage.
+        """
+        system_prompt = (
+            "You are an expert AI SRE Incident Commander Copilot. "
+            "You are assisting a live engineer responding to a production incident. "
+            "Provide concise, mathematically sound, concrete infrastructure advice. "
+            "Reference specific CLI commands, rollback steps, or metric trade-offs when relevant."
+        )
+
+        context_str = ""
+        if incident_context:
+            context_str = (
+                f"\n\n[ACTIVE INCIDENT CONTEXT]\n"
+                f"Service: {incident_context.get('service', 'N/A')}\n"
+                f"Severity: {incident_context.get('severity', 'N/A')}\n"
+                f"Root Cause: {incident_context.get('root_cause', 'N/A')}\n"
+                f"Summary: {incident_context.get('incident_summary', 'N/A')}\n"
+            )
+
+        full_system = system_prompt + context_str
+
+        # Format conversation for completion
+        user_prompt = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in messages])
+
+        return self._execute_completion(
+            system_prompt=full_system,
+            user_prompt=user_prompt,
+            temperature=0.2,
+            max_tokens=1000,
+        )

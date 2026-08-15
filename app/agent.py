@@ -152,6 +152,9 @@ class IncidentResponseAgent:
             _safe_print(f"  {i}. {action}")
         _safe_print("=" * 60 + "\n")
 
+        from app.runbook_generator import RunbookGenerator
+        runbook = RunbookGenerator.generate_runbook(analysis, telemetry=telemetry)
+
         return {
             "incident": original_incident,
             "incident_id": record["incident_id"],
@@ -161,6 +164,7 @@ class IncidentResponseAgent:
             "analysis": analysis,
             "telemetry": telemetry,
             "prediction": prediction,
+            "runbook": runbook,
         }
 
     # =============================================================
