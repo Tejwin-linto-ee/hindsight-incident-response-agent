@@ -659,7 +659,7 @@ st.markdown(CSS, unsafe_allow_html=True)
 for key, default in [
     ("authenticated", False),
     ("user_info", None),
-    ("active_view", "operations"),  # "operations" or "admin_portal"
+    ("active_view", "reasoning"),  # "reasoning", "simulation", "admin_portal"
     ("telemetry_manager", None),
     ("telemetry", None),
     ("simulation_running", False),
@@ -669,6 +669,7 @@ for key, default in [
     ("sre_copilot_messages", []),
     ("webhook_url", ""),
     ("chaos_active", None),
+    ("incident_input_text", "The Payment API is returning HTTP 503 errors. Database connections are timing out and the database connection pool is nearly full. API latency and error rate are increasing, and the request queue is growing."),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
@@ -822,18 +823,24 @@ with st.sidebar:
 
     is_admin = bool(user_info.get("is_admin", False) or user_info.get("username") == "admin")
 
-    col_btn1, col_btn2 = st.columns([1, 1]) if is_admin else (st.container(), None)
-    
+    st.markdown("""
+    <div style="padding:0.4rem 1.25rem 0.25rem 1.25rem;">
+        <div style="font-size:0.65rem; font-weight:800; color:#475569; text-transform:uppercase; letter-spacing:0.12em; margin-bottom:0.4rem;">Navigation</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if st.button("🤖 AI Incident Reasoning", use_container_width=True, type="primary" if st.session_state.active_view == "reasoning" else "secondary", key="nav_ai_reasoning"):
+        st.session_state.active_view = "reasoning"
+        st.rerun()
+
+    if st.button("📡 Simulation & Chaos Lab", use_container_width=True, type="primary" if st.session_state.active_view == "simulation" else "secondary", key="nav_simulation_lab"):
+        st.session_state.active_view = "simulation"
+        st.rerun()
+
     if is_admin:
-        c_a, c_b = st.columns(2)
-        with c_a:
-            if st.button("📡 Ops Hub", use_container_width=True, type="primary" if st.session_state.active_view == "operations" else "secondary"):
-                st.session_state.active_view = "operations"
-                st.rerun()
-        with c_b:
-            if st.button("🛡️ Admin Portal", use_container_width=True, type="primary" if st.session_state.active_view == "admin_portal" else "secondary"):
-                st.session_state.active_view = "admin_portal"
-                st.rerun()
+        if st.button("🛡️ Admin Portal", use_container_width=True, type="primary" if st.session_state.active_view == "admin_portal" else "secondary", key="nav_admin_portal"):
+            st.session_state.active_view = "admin_portal"
+            st.rerun()
 
     if st.button("🔒 Sign Out", use_container_width=True, key="btn_logout"):
         st.session_state.authenticated = False
@@ -1144,360 +1151,387 @@ Review pending access requests, confirm or revoke operator authorizations, assig
 # HERO HEADER
 # ============================================================
 
-live = st.session_state.simulation_running
-pill_html = (
-    '<span class="status-pill pill-live"><span class="live-dot"></span>LIVE STREAMING</span>'
-    if live else
-    '<span class="status-pill pill-standby"><span class="standby-dot"></span>STANDBY</span>'
-)
-
-st.markdown(f"""
-<div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:2rem; gap:1rem; flex-wrap:wrap;">
-    <div>
-        <div class="eyebrow">Enterprise SRE Intelligence</div>
-        <h1 class="section-title" style="font-size:2.1rem; margin-bottom:0.4rem;">
-            Hindsight Incident Command Center
-        </h1>
-        <p class="section-desc" style="max-width:780px; font-size:0.92rem;">
-            Real-time predictive incident intelligence combining live telemetry streaming, calibrated ML failure forecasting, 
-            and persistent organizational memory powered by Hindsight and Kimi K2 (Moonshot AI, 1T MoE).
-        </p>
-    </div>
-    <div style="display:flex; flex-direction:column; align-items:flex-end; gap:0.5rem; flex-shrink:0;">
-        {pill_html}
-        <div style="font-size:0.7rem; color:#334155; font-family:'JetBrains Mono',monospace; text-align:right;">
-            v2.0 · Python 3.11 · Groq · Hindsight
-        </div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-
 # ============================================================
-# TELEMETRY SIMULATION CONTROLS
+# VIEW 1: TELEMETRY & CHAOS SIMULATION LAB
 # ============================================================
 
-st.markdown("""
-<div class="eyebrow">Telemetry & Chaos Control</div>
-<div class="section-title" style="font-size:1.3rem; margin-bottom:0.25rem;">📡 Live Telemetry & Chaos Fault Injector</div>
-<div class="section-desc">
-    Stream continuous telemetry baseline or inject automated Chaos Engineering experiments to stress-test the ML anomaly detector.
-</div>
-""", unsafe_allow_html=True)
-
-from app.chaos_engine import ChaosEngine
-
-tab_std_sim, tab_chaos_sim = st.tabs(["📡 Standard Telemetry Stream", "💥 Chaos Fault Injection Lab"])
-
-with tab_std_sim:
-    c1, c2, c3 = st.columns([2.8, 1.6, 0.9], gap="small")
-
-    SCENARIOS = {
-        "healthy":  "🟢 Healthy Baseline — All Nominal",
-        "database": "🔴 Database Pool Exhaustion",
-        "cpu":      "🔴 CPU Saturation > 95%",
-        "memory":   "🔴 Memory Exhaustion (OOM Risk)",
-        "network":  "🔴 Network Congestion & High Latency",
-        "api":      "🔴 API Availability Degradation",
-    }
-
-    with c1:
-        scenario = st.selectbox(
-            "Scenario",
-            list(SCENARIOS.keys()),
-            format_func=lambda x: SCENARIOS[x],
-            index=list(SCENARIOS.keys()).index(st.session_state.simulation_mode) if st.session_state.simulation_mode in SCENARIOS else 0,
-            label_visibility="collapsed",
-            key="std_scenario_sel",
-        )
-
-    with c2:
-        start_sim = st.button("▶  Start / Restart Stream", type="primary", use_container_width=True, key="btn_start_stream")
-
-    with c3:
-        stop_sim = st.button("■  Stop", use_container_width=True, key="btn_stop_stream")
-
-    if start_sim:
-        st.session_state.simulation_mode = scenario
-        st.session_state.chaos_active = None
-        try:
-            st.session_state.telemetry = st.session_state.telemetry_manager.start(scenario)
-            st.session_state.simulation_running = True
-            st.session_state.prediction = None
-        except Exception as e:
-            st.error(f"Unable to start simulation: {e}")
-
-    if stop_sim:
-        try:
-            st.session_state.telemetry_manager.stop()
-        except Exception:
-            pass
-        st.session_state.simulation_running = False
-        st.session_state.chaos_active = None
-
-with tab_chaos_sim:
-    all_chaos = ChaosEngine.get_all_scenarios()
-    ch_col1, ch_col2 = st.columns([2.5, 1.5], gap="medium")
-
-    with ch_col1:
-        selected_chaos_id = st.selectbox(
-            "Chaos Experiment Scenario",
-            [s.id for s in all_chaos],
-            format_func=lambda sid: ChaosEngine.get_scenario(sid).name if ChaosEngine.get_scenario(sid) else sid,
-            key="chaos_exp_sel",
-        )
-        current_chaos = ChaosEngine.get_scenario(selected_chaos_id)
-        if current_chaos:
-            st.caption(f"🎯 **Target Service:** `{current_chaos.target_service}` &nbsp;|&nbsp; **Expected Type:** `{current_chaos.expected_failure_type}`")
-            st.markdown(f"<div style='font-size:0.8rem; color:#94A3B8; margin-bottom:0.5rem;'>{current_chaos.description}</div>", unsafe_allow_html=True)
-
-    with ch_col2:
-        st.write("")
-        if st.button("💥  Inject Chaos Fault & Trigger Triage", type="primary", use_container_width=True, key="btn_inject_chaos"):
-            if current_chaos:
-                st.session_state.simulation_running = False
-                st.session_state.chaos_active = current_chaos.id
-                # Inject the peak failure step
-                peak_metrics = current_chaos.steps[-1]
-                st.session_state.telemetry = dict(peak_metrics)
-                if predictor_available and predictor:
-                    st.session_state.prediction = predictor.predict(st.session_state.telemetry)
-                
-                # Security audit log
-                SecurityManager.log_event(
-                    event_type="CHAOS_EXPERIMENT_INJECTED",
-                    actor=current_user.get("username", "anonymous"),
-                    details=f"Injected chaos: {current_chaos.name} on {current_chaos.target_service}",
-                    status="SUCCESS"
-                )
-                st.success(f"⚡ Injected fault: {current_chaos.name} — Metrics pushed to ML engine!")
-                st.rerun()
-
-if st.session_state.simulation_running:
-    try:
-        sample = st.session_state.telemetry_manager.next_sample()
-        if sample:
-            st.session_state.telemetry = sample
-    except Exception as e:
-        st.error(f"Telemetry stream error: {e}")
-
-telemetry = st.session_state.telemetry
-
-
-# ============================================================
-# TELEMETRY METRIC CARDS
-# ============================================================
-
-if telemetry:
-    # Cluster 1 — Compute
-    st.markdown('<div class="cluster-header"><span class="cluster-label">⚙ Compute & Resources</span><div class="cluster-line"></div></div>', unsafe_allow_html=True)
-    cols = st.columns(4, gap="small")
-    cards = [
-        ("💻", "CPU Utilization",  f"{telemetry.get('cpu_percent',0):.1f}%",     "cpu_percent"),
-        ("🧠", "Memory Usage",     f"{telemetry.get('memory_percent',0):.1f}%",  "memory_percent"),
-        ("💾", "Disk Storage",     f"{telemetry.get('disk_percent',0):.1f}%",    "disk_percent"),
-        ("🏊", "DB Pool Usage",    f"{telemetry.get('db_pool_usage',0):.1f}%",   "db_pool_usage"),
-    ]
-    for col, (icon, label, val_str, key) in zip(cols, cards):
-        with col:
-            st.markdown(metric_card_html(icon, label, val_str, key, telemetry.get(key,0)), unsafe_allow_html=True)
-
-    # Cluster 2 — Service Health
-    st.markdown('<div class="cluster-header"><span class="cluster-label">🏥 Service Health & Database</span><div class="cluster-line"></div></div>', unsafe_allow_html=True)
-    cols = st.columns(4, gap="small")
-    cards2 = [
-        ("🔌", "Active DB Conns",  f"{telemetry.get('db_connections',0):.1f}%", "db_connections"),
-        ("⏱️", "API Latency",       f"{telemetry.get('api_latency_ms',0):.0f}ms", "api_latency_ms"),
-        ("⚠️", "HTTP Error Rate",   f"{telemetry.get('error_rate',0):.2f}%",     "error_rate"),
-        ("📬", "Request Queue",    f"{telemetry.get('queue_depth',0):.0f}",      "queue_depth"),
-    ]
-    for col, (icon, label, val_str, key) in zip(cols, cards2):
-        with col:
-            st.markdown(metric_card_html(icon, label, val_str, key, telemetry.get(key,0)), unsafe_allow_html=True)
-
-    # Cluster 3 — Traffic & Network
-    st.markdown('<div class="cluster-header"><span class="cluster-label">🌐 Traffic & Network</span><div class="cluster-line"></div></div>', unsafe_allow_html=True)
-    cols = st.columns(3, gap="small")
-    cards3 = [
-        ("📈", "Req. Rate",         f"{telemetry.get('request_rate',0):.0f}/s",  "request_rate"),
-        ("🌐", "Network Latency",   f"{telemetry.get('network_latency_ms',0):.0f}ms", "network_latency_ms"),
-        ("🚀", "Traffic Growth",    f"+{telemetry.get('traffic_growth_percent',0):.1f}%", "traffic_growth_percent"),
-    ]
-    for col, (icon, label, val_str, key) in zip(cols, cards3):
-        with col:
-            st.markdown(metric_card_html(icon, label, val_str, key, telemetry.get(key,0)), unsafe_allow_html=True)
-
-else:
-    st.markdown("""
-    <div class="empty-state">
-        <span class="empty-state-icon">📡</span>
-        <div style="font-size:1rem; font-weight:700; color:#334155; margin-bottom:0.3rem;">No Telemetry Stream Active</div>
-        <div style="font-size:0.85rem;">Select a scenario and click <strong>Start / Restart Stream</strong> above to begin live monitoring.</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-
-# ============================================================
-# RUN FAILURE PREDICTION
-# ============================================================
-
-if telemetry and predictor_available and predictor:
-    try:
-        pred = predictor.predict(telemetry)
-        st.session_state.prediction = pred
-    except Exception:
-        st.session_state.prediction = None
-
-prediction = st.session_state.prediction
-
-
-# ============================================================
-# PREDICTIVE FAILURE INTELLIGENCE
-# ============================================================
-
-if prediction:
-    st.divider()
-
-    risk          = int(prediction.get("failure_risk", 0))
-    risk_level    = str(prediction.get("risk_level", "LOW"))
-    pred_failure  = str(prediction.get("predicted_failure", "No immediate failure predicted"))
-    failure_type  = str(prediction.get("predicted_failure_type", "No Failure"))
-    type_prob     = float(prediction.get("predicted_failure_probability", 0))
-    risk_window   = str(prediction.get("risk_window", "No immediate failure window detected"))
-    confidence    = float(prediction.get("prediction_confidence", 0))
-    model_name    = str(prediction.get("model", "Calibrated Multiclass Random Forest"))
-
-    is_crit       = risk >= 60
-    hero_cls      = "risk-hero critical-state" if is_crit else "risk-hero"
-
-    level_cfg = {
-        "CRITICAL": ("#F87171", "#EF4444"),
-        "HIGH":     ("#FB923C", "#F97316"),
-        "MEDIUM":   ("#FBBF24", "#F59E0B"),
-        "LOW":      ("#34D399", "#10B981"),
-    }
-    l_text, l_color = level_cfg.get(risk_level, ("#94A3B8","#64748B"))
-
-    st.markdown('<div class="eyebrow">AI Forecasting Engine</div>', unsafe_allow_html=True)
-    st.markdown('<div class="section-title" style="font-size:1.3rem; margin-bottom:1rem;">🔮 Predictive Failure Intelligence</div>', unsafe_allow_html=True)
+if st.session_state.active_view == "simulation":
+    live = st.session_state.simulation_running
+    pill_html = (
+        '<span class="status-pill pill-live"><span class="live-dot"></span>LIVE STREAMING</span>'
+        if live else
+        '<span class="status-pill pill-standby"><span class="standby-dot"></span>STANDBY</span>'
+    )
 
     st.markdown(f"""
-    <div class="{hero_cls}">
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1.5rem; margin-bottom:1.25rem;">
-            <div style="flex:1; min-width:240px;">
-                <div style="font-size:0.7rem; font-weight:800; color:{l_color}; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:0.4rem;">{risk_level} RISK</div>
-                <div style="font-size:1.5rem; font-weight:800; color:#FFFFFF; line-height:1.2; margin-bottom:0.5rem;">{pred_failure}</div>
-                <div style="font-size:0.88rem; color:#94A3B8;">Predicted type: <strong style="color:#E2E8F0;">{failure_type}</strong> &nbsp;·&nbsp; {type_prob:.1f}% probability</div>
-            </div>
-            <div style="display:flex; flex-direction:column; align-items:flex-end; gap:0.6rem;">
-                <div style="background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:0.75rem 1.25rem; text-align:center; min-width:120px;">
-                    <div style="font-family:'JetBrains Mono',monospace; font-size:2.2rem; font-weight:800; color:{l_color}; line-height:1;">{risk}%</div>
-                    <div style="font-size:0.65rem; color:#64748B; margin-top:0.15rem; text-transform:uppercase; letter-spacing:0.06em;">Failure Risk</div>
-                </div>
-            </div>
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:2rem; gap:1rem; flex-wrap:wrap;">
+        <div>
+            <div class="eyebrow">Interactive Environment</div>
+            <h1 class="section-title" style="font-size:2.1rem; margin-bottom:0.4rem;">
+                📡 Telemetry & Chaos Simulation Lab
+            </h1>
+            <p class="section-desc" style="max-width:780px; font-size:0.92rem;">
+                Stream continuous multi-dimensional telemetry, inject synthetic Chaos Engineering faults, and monitor ML failure forecasting in real time.
+            </p>
         </div>
-        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:0.75rem;">
-            <div style="background:rgba(0,0,0,0.3); border-radius:9px; padding:0.7rem 0.9rem; border:1px solid rgba(255,255,255,0.06);">
-                <div style="font-size:0.65rem; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:0.3rem;">⏱ Time to Failure</div>
-                <div style="font-size:0.88rem; font-weight:600; color:#F1F5F9;">{prediction.get('time_to_failure', risk_window)}</div>
-            </div>
-            <div style="background:rgba(0,0,0,0.3); border-radius:9px; padding:0.7rem 0.9rem; border:1px solid rgba(255,255,255,0.06);">
-                <div style="font-size:0.65rem; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:0.3rem;">🚨 Urgency Index</div>
-                <div style="font-size:0.88rem; font-weight:700; color:{l_color};">{prediction.get('urgency_index', risk)}/100</div>
-                <div class="conf-bar-wrap"><div class="conf-bar-fill" style="width:{prediction.get('urgency_index', risk)}%;"></div></div>
-            </div>
-            <div style="background:rgba(0,0,0,0.3); border-radius:9px; padding:0.7rem 0.9rem; border:1px solid rgba(255,255,255,0.06);">
-                <div style="font-size:0.65rem; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:0.3rem;">📈 Anomaly Score</div>
-                <div style="font-size:0.88rem; font-weight:700; color:#FCD34D;">{prediction.get('anomaly_score', 0.0):.2f}σ</div>
-            </div>
-            <div style="background:rgba(0,0,0,0.3); border-radius:9px; padding:0.7rem 0.9rem; border:1px solid rgba(255,255,255,0.06);">
-                <div style="font-size:0.65rem; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:0.3rem;">🎯 Model Confidence</div>
-                <div style="font-size:0.88rem; font-weight:600; color:#34D399;">{confidence:.0f}%</div>
-                <div class="conf-bar-wrap"><div class="conf-bar-fill" style="width:{confidence}%;"></div></div>
+        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:0.5rem; flex-shrink:0;">
+            {pill_html}
+            <div style="font-size:0.7rem; color:#334155; font-family:'JetBrains Mono',monospace; text-align:right;">
+                v2.5 · Python 3.11 · Scikit-Learn · OpenRouter
             </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Probabilities + Indicators split
-    pcol1, pcol2 = st.columns([1.3, 1], gap="large")
+    # ─── TELEMETRY & CHAOS CONTROLS ───
+    st.markdown("""
+    <div class="eyebrow">Telemetry & Chaos Control</div>
+    <div class="section-title" style="font-size:1.3rem; margin-bottom:0.25rem;">Live Fault Injection Lab</div>
+    <div class="section-desc">
+        Select standard streaming scenarios or trigger deep Chaos Engineering experiments to evaluate failure propagation.
+    </div>
+    """, unsafe_allow_html=True)
 
-    with pcol1:
-        st.markdown('<div style="font-size:0.88rem; font-weight:700; color:#E2E8F0; margin-bottom:0.85rem; margin-top:0.25rem;">📊 Failure Class Probabilities</div>', unsafe_allow_html=True)
-        probs = prediction.get("failure_type_probabilities", [])
-        for item in probs:
-            name   = item.get("display_name", item.get("failure_type","?"))
-            prob   = float(item.get("probability", 0))
-            is_top = (name == failure_type and prob > 3.0)
-            row_cls  = "prob-row is-top" if is_top else "prob-row"
-            name_cls = "prob-name top-name" if is_top else "prob-name"
-            fill_cls = "prob-bar-fill top-fill" if is_top else "prob-bar-fill"
-            pct_cls  = "prob-pct top-pct" if is_top else "prob-pct"
-            fill_pct = max(1, min(100, int(prob)))
-            st.markdown(f"""
-            <div class="{row_cls}">
-                <span class="{name_cls}">{name}</span>
-                <div class="prob-bar-wrap"><div class="{fill_cls}" style="width:{fill_pct}%;"></div></div>
-                <span class="{pct_cls}">{prob:.2f}%</span>
+    from app.chaos_engine import ChaosEngine
+
+    tab_std_sim, tab_chaos_sim = st.tabs(["📡 Standard Telemetry Stream", "💥 Chaos Fault Injection Experiments"])
+
+    with tab_std_sim:
+        c1, c2, c3 = st.columns([2.8, 1.6, 0.9], gap="small")
+
+        SCENARIOS = {
+            "healthy":  "🟢 Healthy Baseline — All Nominal",
+            "database": "🔴 Database Pool Exhaustion",
+            "cpu":      "🔴 CPU Saturation > 95%",
+            "memory":   "🔴 Memory Exhaustion (OOM Risk)",
+            "network":  "🔴 Network Congestion & High Latency",
+            "api":      "🔴 API Availability Degradation",
+        }
+
+        with c1:
+            scenario = st.selectbox(
+                "Scenario",
+                list(SCENARIOS.keys()),
+                format_func=lambda x: SCENARIOS[x],
+                index=list(SCENARIOS.keys()).index(st.session_state.simulation_mode) if st.session_state.simulation_mode in SCENARIOS else 0,
+                label_visibility="collapsed",
+                key="std_scenario_sel",
+            )
+
+        with c2:
+            start_sim = st.button("▶  Start / Restart Stream", type="primary", use_container_width=True, key="btn_start_stream")
+
+        with c3:
+            stop_sim = st.button("■  Stop", use_container_width=True, key="btn_stop_stream")
+
+        if start_sim:
+            st.session_state.simulation_mode = scenario
+            st.session_state.chaos_active = None
+            try:
+                st.session_state.telemetry = st.session_state.telemetry_manager.start(scenario)
+                st.session_state.simulation_running = True
+                st.session_state.prediction = None
+            except Exception as e:
+                st.error(f"Unable to start simulation: {e}")
+
+        if stop_sim:
+            try:
+                st.session_state.telemetry_manager.stop()
+            except Exception:
+                pass
+            st.session_state.simulation_running = False
+            st.session_state.chaos_active = None
+
+    with tab_chaos_sim:
+        all_chaos = ChaosEngine.get_all_scenarios()
+        ch_col1, ch_col2 = st.columns([2.5, 1.5], gap="medium")
+
+        with ch_col1:
+            selected_chaos_id = st.selectbox(
+                "Chaos Experiment Scenario",
+                [s.id for s in all_chaos],
+                format_func=lambda sid: ChaosEngine.get_scenario(sid).name if ChaosEngine.get_scenario(sid) else sid,
+                key="chaos_exp_sel",
+            )
+            current_chaos = ChaosEngine.get_scenario(selected_chaos_id)
+            if current_chaos:
+                st.caption(f"🎯 **Target Service:** `{current_chaos.target_service}` &nbsp;|&nbsp; **Expected Failure Archetype:** `{current_chaos.expected_failure_type}`")
+                st.markdown(f"<div style='font-size:0.8rem; color:#94A3B8; margin-bottom:0.5rem;'>{current_chaos.description}</div>", unsafe_allow_html=True)
+
+        with ch_col2:
+            st.write("")
+            if st.button("💥  Inject Chaos Fault & Compute Anomaly", type="primary", use_container_width=True, key="btn_inject_chaos"):
+                if current_chaos:
+                    st.session_state.simulation_running = False
+                    st.session_state.chaos_active = current_chaos.id
+                    # Inject peak failure step
+                    peak_metrics = current_chaos.steps[-1]
+                    st.session_state.telemetry = dict(peak_metrics)
+                    st.session_state.incident_input_text = (
+                        f"The {current_chaos.target_service} is experiencing critical degradation. "
+                        f"Observed Symptoms: {', '.join(current_chaos.symptoms)}. "
+                        f"{current_chaos.description}"
+                    )
+                    if predictor_available and predictor:
+                        st.session_state.prediction = predictor.predict(st.session_state.telemetry)
+                    
+                    # Security audit log
+                    SecurityManager.log_event(
+                        event_type="CHAOS_EXPERIMENT_INJECTED",
+                        actor=current_user.get("username", "anonymous"),
+                        details=f"Injected chaos: {current_chaos.name} on {current_chaos.target_service}",
+                        status="SUCCESS"
+                    )
+                    st.success(f"⚡ Injected fault: {current_chaos.name} — Metrics pushed to ML engine!")
+                    st.rerun()
+
+    if st.session_state.simulation_running:
+        try:
+            sample = st.session_state.telemetry_manager.next_sample()
+            if sample:
+                st.session_state.telemetry = sample
+        except Exception as e:
+            st.error(f"Telemetry stream error: {e}")
+
+    telemetry = st.session_state.telemetry
+
+    # ─── 11-DIMENSION METRIC CARDS ───
+    if telemetry:
+        # Cluster 1 — Compute
+        st.markdown('<div class="cluster-header"><span class="cluster-label">⚙ Compute & Resources</span><div class="cluster-line"></div></div>', unsafe_allow_html=True)
+        cols = st.columns(4, gap="small")
+        cards = [
+            ("💻", "CPU Utilization",  f"{telemetry.get('cpu_percent',0):.1f}%",     "cpu_percent"),
+            ("🧠", "Memory Usage",     f"{telemetry.get('memory_percent',0):.1f}%",  "memory_percent"),
+            ("💾", "Disk Storage",     f"{telemetry.get('disk_percent',0):.1f}%",    "disk_percent"),
+            ("🏊", "DB Pool Usage",    f"{telemetry.get('db_pool_usage',0):.1f}%",   "db_pool_usage"),
+        ]
+        for col, (icon, label, val_str, key) in zip(cols, cards):
+            with col:
+                st.markdown(metric_card_html(icon, label, val_str, key, telemetry.get(key,0)), unsafe_allow_html=True)
+
+        # Cluster 2 — Service Health
+        st.markdown('<div class="cluster-header"><span class="cluster-label">🏥 Service Health & Database</span><div class="cluster-line"></div></div>', unsafe_allow_html=True)
+        cols = st.columns(4, gap="small")
+        cards2 = [
+            ("🔌", "Active DB Conns",  f"{telemetry.get('db_connections',0):.1f}%", "db_connections"),
+            ("⏱️", "API Latency",       f"{telemetry.get('api_latency_ms',0):.0f}ms", "api_latency_ms"),
+            ("⚠️", "HTTP Error Rate",   f"{telemetry.get('error_rate',0):.2f}%",     "error_rate"),
+            ("📬", "Request Queue",    f"{telemetry.get('queue_depth',0):.0f}",      "queue_depth"),
+        ]
+        for col, (icon, label, val_str, key) in zip(cols, cards2):
+            with col:
+                st.markdown(metric_card_html(icon, label, val_str, key, telemetry.get(key,0)), unsafe_allow_html=True)
+
+        # Cluster 3 — Traffic & Network
+        st.markdown('<div class="cluster-header"><span class="cluster-label">🌐 Traffic & Network</span><div class="cluster-line"></div></div>', unsafe_allow_html=True)
+        cols = st.columns(3, gap="small")
+        cards3 = [
+            ("📈", "Req. Rate",         f"{telemetry.get('request_rate',0):.0f}/s",  "request_rate"),
+            ("🌐", "Network Latency",   f"{telemetry.get('network_latency_ms',0):.0f}ms", "network_latency_ms"),
+            ("🚀", "Traffic Growth",    f"+{telemetry.get('traffic_growth_percent',0):.1f}%", "traffic_growth_percent"),
+        ]
+        for col, (icon, label, val_str, key) in zip(cols, cards3):
+            with col:
+                st.markdown(metric_card_html(icon, label, val_str, key, telemetry.get(key,0)), unsafe_allow_html=True)
+
+    else:
+        st.markdown("""
+        <div class="empty-state">
+            <span class="empty-state-icon">📡</span>
+            <div style="font-size:1rem; font-weight:700; color:#334155; margin-bottom:0.3rem;">No Telemetry Stream Active</div>
+            <div style="font-size:0.85rem;">Select a scenario above or inject a Chaos Experiment to begin live monitoring.</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ─── ML PREDICTIVE INTELLIGENCE ───
+    if telemetry and predictor_available and predictor:
+        try:
+            pred = predictor.predict(telemetry)
+            st.session_state.prediction = pred
+        except Exception:
+            st.session_state.prediction = None
+
+    prediction = st.session_state.prediction
+
+    if prediction:
+        st.divider()
+
+        risk          = int(prediction.get("failure_risk", 0))
+        risk_level    = str(prediction.get("risk_level", "LOW"))
+        pred_failure  = str(prediction.get("predicted_failure", "No immediate failure predicted"))
+        failure_type  = str(prediction.get("predicted_failure_type", "No Failure"))
+        type_prob     = float(prediction.get("predicted_failure_probability", 0))
+        risk_window   = str(prediction.get("risk_window", "No immediate failure window detected"))
+        confidence    = float(prediction.get("prediction_confidence", 0))
+
+        is_crit       = risk >= 60
+        hero_cls      = "risk-hero critical-state" if is_crit else "risk-hero"
+
+        level_cfg = {
+            "CRITICAL": ("#F87171", "#EF4444"),
+            "HIGH":     ("#FB923C", "#F97316"),
+            "MEDIUM":   ("#FBBF24", "#F59E0B"),
+            "LOW":      ("#34D399", "#10B981"),
+        }
+        l_text, l_color = level_cfg.get(risk_level, ("#94A3B8","#64748B"))
+
+        st.markdown('<div class="eyebrow">AI Forecasting Engine</div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title" style="font-size:1.3rem; margin-bottom:1rem;">🔮 Predictive Failure Intelligence</div>', unsafe_allow_html=True)
+
+        st.markdown(f"""
+        <div class="{hero_cls}">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1.5rem; margin-bottom:1.25rem;">
+                <div style="flex:1; min-width:240px;">
+                    <div style="font-size:0.7rem; font-weight:800; color:{l_color}; text-transform:uppercase; letter-spacing:0.1em; margin-bottom:0.4rem;">{risk_level} RISK</div>
+                    <div style="font-size:1.5rem; font-weight:800; color:#FFFFFF; line-height:1.2; margin-bottom:0.5rem;">{pred_failure}</div>
+                    <div style="font-size:0.88rem; color:#94A3B8;">Predicted type: <strong style="color:#E2E8F0;">{failure_type}</strong> &nbsp;·&nbsp; {type_prob:.1f}% probability</div>
+                </div>
+                <div style="display:flex; flex-direction:column; align-items:flex-end; gap:0.6rem;">
+                    <div style="background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:0.75rem 1.25rem; text-align:center; min-width:120px;">
+                        <div style="font-family:'JetBrains Mono',monospace; font-size:2.2rem; font-weight:800; color:{l_color}; line-height:1;">{risk}%</div>
+                        <div style="font-size:0.65rem; color:#64748B; margin-top:0.15rem; text-transform:uppercase; letter-spacing:0.06em;">Failure Risk</div>
+                    </div>
+                </div>
             </div>
-            """, unsafe_allow_html=True)
+            <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:0.75rem;">
+                <div style="background:rgba(0,0,0,0.3); border-radius:9px; padding:0.7rem 0.9rem; border:1px solid rgba(255,255,255,0.06);">
+                    <div style="font-size:0.65rem; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:0.3rem;">⏱ Time to Failure</div>
+                    <div style="font-size:0.88rem; font-weight:600; color:#F1F5F9;">{prediction.get('time_to_failure', risk_window)}</div>
+                </div>
+                <div style="background:rgba(0,0,0,0.3); border-radius:9px; padding:0.7rem 0.9rem; border:1px solid rgba(255,255,255,0.06);">
+                    <div style="font-size:0.65rem; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:0.3rem;">🚨 Urgency Index</div>
+                    <div style="font-size:0.88rem; font-weight:700; color:{l_color};">{prediction.get('urgency_index', risk)}/100</div>
+                    <div class="conf-bar-wrap"><div class="conf-bar-fill" style="width:{prediction.get('urgency_index', risk)}%;"></div></div>
+                </div>
+                <div style="background:rgba(0,0,0,0.3); border-radius:9px; padding:0.7rem 0.9rem; border:1px solid rgba(255,255,255,0.06);">
+                    <div style="font-size:0.65rem; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:0.3rem;">📈 Anomaly Score</div>
+                    <div style="font-size:0.88rem; font-weight:700; color:#FCD34D;">{prediction.get('anomaly_score', 0.0):.2f}σ</div>
+                </div>
+                <div style="background:rgba(0,0,0,0.3); border-radius:9px; padding:0.7rem 0.9rem; border:1px solid rgba(255,255,255,0.06);">
+                    <div style="font-size:0.65rem; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:0.3rem;">🎯 Model Confidence</div>
+                    <div style="font-size:0.88rem; font-weight:600; color:#34D399;">{confidence:.0f}%</div>
+                    <div class="conf-bar-wrap"><div class="conf-bar-fill" style="width:{confidence}%;"></div></div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    with pcol2:
-        st.markdown('<div style="font-size:0.88rem; font-weight:700; color:#E2E8F0; margin-bottom:0.85rem; margin-top:0.25rem;">⚠️ Active Risk Indicators</div>', unsafe_allow_html=True)
-        evidence = prediction.get("evidence", [])
-        if evidence:
-            for ind in evidence:
-                feat = ind.get("feature","metric")
-                val  = ind.get("value","")
-                sev  = ind.get("status","WARNING")
-                chip_cls = "crit-chip" if sev == "CRITICAL" else "warn-chip"
-                b_cls    = "crit-b"   if sev == "CRITICAL" else "warn-b"
+        pcol1, pcol2 = st.columns([1.3, 1], gap="large")
+
+        with pcol1:
+            st.markdown('<div style="font-size:0.88rem; font-weight:700; color:#E2E8F0; margin-bottom:0.85rem; margin-top:0.25rem;">📊 Failure Class Probabilities</div>', unsafe_allow_html=True)
+            probs = prediction.get("failure_type_probabilities", [])
+            for item in probs:
+                name   = item.get("display_name", item.get("failure_type","?"))
+                prob   = float(item.get("probability", 0))
+                is_top = (name == failure_type and prob > 3.0)
+                row_cls  = "prob-row is-top" if is_top else "prob-row"
+                name_cls = "prob-name top-name" if is_top else "prob-name"
+                fill_cls = "prob-bar-fill top-fill" if is_top else "prob-bar-fill"
+                pct_cls  = "prob-pct top-pct" if is_top else "prob-pct"
+                fill_pct = max(1, min(100, int(prob)))
                 st.markdown(f"""
-                <div class="ind-chip {chip_cls}">
-                    <span class="ind-name">{feat}</span>
-                    <span class="ind-val">{val}</span>
-                    <span class="ind-badge {b_cls}">{sev}</span>
+                <div class="{row_cls}">
+                    <span class="{name_cls}">{name}</span>
+                    <div class="prob-bar-wrap"><div class="{fill_cls}" style="width:{fill_pct}%;"></div></div>
+                    <span class="{pct_cls}">{prob:.2f}%</span>
                 </div>
                 """, unsafe_allow_html=True)
-        else:
-            st.markdown("""
-            <div style="background:rgba(16,185,129,0.05); border:1px solid rgba(16,185,129,0.15); border-radius:10px; padding:1rem; text-align:center; color:#34D399; font-size:0.85rem; font-weight:600;">
-                🟢 All metrics within nominal thresholds
-            </div>
-            """, unsafe_allow_html=True)
 
-        attributions = prediction.get("feature_attributions", [])
-        if attributions:
-            with st.expander("🔍 Explainable AI · Telemetry Drivers Attribution", expanded=True):
-                for attr in attributions:
-                    feat_name = attr.get("feature", "")
-                    pct = attr.get("attribution_percent", 0)
-                    is_drv = attr.get("is_driver", False)
-                    color = "#FB7185" if is_drv else "#14B8A6"
+        with pcol2:
+            st.markdown('<div style="font-size:0.88rem; font-weight:700; color:#E2E8F0; margin-bottom:0.85rem; margin-top:0.25rem;">⚠️ Active Risk Indicators</div>', unsafe_allow_html=True)
+            evidence = prediction.get("evidence", [])
+            if evidence:
+                for ind in evidence:
+                    feat = ind.get("feature","metric")
+                    val  = ind.get("value","")
+                    sev  = ind.get("status","WARNING")
+                    chip_cls = "crit-chip" if sev == "CRITICAL" else "warn-chip"
+                    b_cls    = "crit-b"   if sev == "CRITICAL" else "warn-b"
                     st.markdown(f"""
-                    <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.8rem; padding:0.3rem 0; border-bottom:1px solid rgba(255,255,255,0.04);">
-                        <span style="font-weight:600; color:{'#F1F5F9' if is_drv else '#94A3B8'};">{'🚨 ' if is_drv else '• '}{feat_name}</span>
-                        <span style="font-family:'JetBrains Mono',monospace; color:{color}; font-weight:700;">{pct}% impact</span>
+                    <div class="ind-chip {chip_cls}">
+                        <span class="ind-name">{feat}</span>
+                        <span class="ind-val">{val}</span>
+                        <span class="ind-badge {b_cls}">{sev}</span>
                     </div>
                     """, unsafe_allow_html=True)
 
-    # Preemptive Remediation Playbook
-    preemptive = prediction.get("preemptive_remediation", [])
-    if preemptive and risk >= 30:
-        st.markdown("""
-        <div style="background:rgba(20,184,166,0.07); border:1px solid rgba(20,184,166,0.2); border-radius:12px; padding:1rem 1.25rem; margin-top:1rem;">
-            <div style="font-size:0.75rem; font-weight:800; color:#5EEAD4; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:0.5rem;">⚡ Pre-Emptive SRE Mitigation Playbook</div>
-        """, unsafe_allow_html=True)
-        for i, step in enumerate(preemptive, 1):
-            st.markdown(f"<div style='font-size:0.84rem; color:#E2E8F0; margin-bottom:0.35rem;'><strong>{i}.</strong> {step}</div>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+        # Preemptive Remediation Playbook
+        preemptive = prediction.get("preemptive_remediation", [])
+        if preemptive and risk >= 30:
+            st.markdown("""
+            <div style="background:rgba(20,184,166,0.07); border:1px solid rgba(20,184,166,0.2); border-radius:12px; padding:1rem 1.25rem; margin-top:1rem;">
+                <div style="font-size:0.75rem; font-weight:800; color:#5EEAD4; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:0.5rem;">⚡ Pre-Emptive SRE Mitigation Playbook</div>
+            """, unsafe_allow_html=True)
+            for i, step in enumerate(preemptive, 1):
+                st.markdown(f"<div style='font-size:0.84rem; color:#E2E8F0; margin-bottom:0.35rem;'><strong>{i}.</strong> {step}</div>", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    # ─── ACTION: SWITCH TO AI REASONING VIEW ───
+    st.divider()
+    st.markdown("""
+    <div style="background:linear-gradient(135deg,rgba(20,184,166,0.08) 0%,rgba(99,102,241,0.08) 100%); border:1px solid rgba(20,184,166,0.25); border-radius:14px; padding:1.25rem 1.5rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem;">
+        <div>
+            <div style="font-size:0.8rem; font-weight:800; color:#5EEAD4; text-transform:uppercase; letter-spacing:0.08em;">Forward to AI Incident Commander</div>
+            <div style="font-size:1.05rem; font-weight:700; color:#FFFFFF; margin-top:0.15rem;">Ready to investigate root cause & generate automated runbooks?</div>
+            <div style="font-size:0.82rem; color:#94A3B8; margin-top:0.2rem;">All active telemetry metrics and ML failure predictions will be synthesized by Kimi K2.</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.write("")
+    if st.button("🤖  Launch AI Reasoning Investigation (First Page)", type="primary", use_container_width=True, key="btn_go_reasoning"):
+        st.session_state.active_view = "reasoning"
+        st.rerun()
+
+    st.stop()  # Stop execution here for simulation view
 
 
 # ============================================================
-# INCIDENT INVESTIGATION
+# VIEW 2: AI INCIDENT COMMANDER & REASONING (THE FIRST PAGE)
 # ============================================================
 
-st.divider()
+st.markdown("""
+<div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:1.75rem; gap:1rem; flex-wrap:wrap;">
+    <div>
+        <div class="eyebrow">Enterprise SRE Intelligence</div>
+        <h1 class="section-title" style="font-size:2.1rem; margin-bottom:0.4rem;">
+            🤖 AI Incident Commander & Reasoning
+        </h1>
+        <p class="section-desc" style="max-width:780px; font-size:0.92rem;">
+            Deep multi-turn incident reasoning synthesizing live telemetry, ML failure predictions, and persistent organizational memory via Hindsight and Moonshot AI Kimi K2.
+        </p>
+    </div>
+    <div style="display:flex; flex-direction:column; align-items:flex-end; gap:0.5rem; flex-shrink:0;">
+        <span class="status-pill pill-live" style="background:rgba(20,184,166,0.15); color:#5EEAD4; border-color:rgba(20,184,166,0.3);"><span class="live-dot" style="background:#5EEAD4;"></span>AI COMMANDER ACTIVE</span>
+        <div style="font-size:0.7rem; color:#334155; font-family:'JetBrains Mono',monospace; text-align:right;">
+            Moonshot AI Kimi K2 · Hindsight Memory
+        </div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ─── ACTIVE TELEMETRY STATUS BANNER ───
+current_telemetry = st.session_state.telemetry
+current_pred = st.session_state.prediction
+
+if current_telemetry:
+    risk_val = current_pred.get("failure_risk", 0) if current_pred else 0
+    pred_type = current_pred.get("predicted_failure_type", "Active Stream") if current_pred else "Live Telemetry"
+    r_color = "#FB7185" if risk_val >= 60 else ("#F59E0B" if risk_val >= 30 else "#34D399")
+
+    st.markdown(f"""
+    <div style="background:rgba(15,23,42,0.85); border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:0.75rem 1.1rem; margin-bottom:1.25rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem;">
+        <div style="display:flex; align-items:center; gap:0.75rem; flex-wrap:wrap;">
+            <span style="font-size:0.8rem; font-weight:700; color:#5EEAD4;">📡 Connected Telemetry:</span>
+            <span style="font-size:0.82rem; color:#F1F5F9; font-weight:600;">{pred_type}</span>
+            <span style="background:rgba(255,255,255,0.05); color:{r_color}; border:1px solid {r_color}44; font-size:0.72rem; font-weight:800; padding:0.15rem 0.5rem; border-radius:6px; font-family:'JetBrains Mono',monospace;">
+                {risk_val}% ML Risk
+            </span>
+            <span style="font-size:0.75rem; color:#64748B;">CPU: {current_telemetry.get('cpu_percent', 0):.0f}% · DB Pool: {current_telemetry.get('db_pool_usage', 0):.0f}% · Latency: {current_telemetry.get('api_latency_ms', 0):.0f}ms</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 st.markdown("""
 <div class="eyebrow">AI Investigation Engine</div>
@@ -1510,13 +1544,10 @@ st.markdown("""
 
 incident_text = st.text_area(
     "Incident Description",
-    value=(
-        "The Payment API is returning HTTP 503 errors. "
-        "Database connections are timing out and the database connection pool is nearly full. "
-        "API latency and error rate are increasing, and the request queue is growing."
-    ),
+    value=st.session_state.incident_input_text,
     height=105,
     label_visibility="collapsed",
+    key="incident_input_widget",
 )
 
 if st.button("🧠  Investigate Current System State", type="primary", use_container_width=True):
