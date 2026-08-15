@@ -31,3 +31,6 @@ backup_before_polish/
 
 # Old incident history
 data/incident_history_old.json
+# Local authentication and security runtime state
+data/users.json
+data/audit_logs.json
