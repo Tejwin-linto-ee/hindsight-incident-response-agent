@@ -8,10 +8,12 @@ class IncidentResponseAgent:
     def __init__(self):
 
         self.memory = IncidentMemory()
-
         self.llm = IncidentLLM()
-
         self.history = IncidentHistory()
+
+    # =============================================================
+    # INVESTIGATE INCIDENT
+    # =============================================================
 
     def investigate(
         self,
@@ -32,9 +34,17 @@ class IncidentResponseAgent:
                 "Incident description cannot be empty."
             )
 
-        print("\n🔎 Investigating incident...")
-        print("=" * 60)
-        print(incident)
+        print(
+            "\n🔍 Investigating incident..."
+        )
+
+        print(
+            "=" * 60
+        )
+
+        print(
+            incident
+        )
 
         # ---------------------------------------------------------
         # STEP 1
@@ -79,7 +89,7 @@ class IncidentResponseAgent:
 
         # ---------------------------------------------------------
         # STEP 2
-        # Groq analysis
+        # Groq / GPT-OSS analysis
         # ---------------------------------------------------------
 
         print(
@@ -107,26 +117,61 @@ class IncidentResponseAgent:
                 "structured response."
             )
 
+        # IMPORTANT:
+        #
+        # app/llm.py uses:
+        #
+        #     reasoning_summary
+        #
+        # NOT:
+        #
+        #     reasoning
+        #
+        # The previous agent.py was checking for
+        # "reasoning", which caused:
+        #
+        # ValueError:
+        # The AI response is missing required fields:
+        # ['reasoning']
+
         required_fields = [
+
             "severity",
+
             "service",
+
             "category",
+
             "incident_summary",
+
             "root_cause",
+
             "root_cause_confidence",
+
             "historical_evidence",
+
             "recommended_actions",
+
             "short_term_actions",
+
             "long_term_prevention",
-            "reasoning",
+
+            "reasoning_summary",
+
             "confidence",
+
             "uncertainty",
+
         ]
 
         missing_fields = [
+
             field
+
             for field in required_fields
+
             if field not in analysis
+
         ]
 
         if missing_fields:
@@ -137,14 +182,32 @@ class IncidentResponseAgent:
             )
 
         # ---------------------------------------------------------
+        # NORMALIZE REASONING FIELD
+        # ---------------------------------------------------------
+        #
+        # The LLM officially returns reasoning_summary.
+        #
+        # Internally we also create "reasoning" so any older
+        # dashboard code will continue to work.
+
+        analysis["reasoning"] = (
+            analysis["reasoning_summary"]
+        )
+
+        # ---------------------------------------------------------
         # Validate severity
         # ---------------------------------------------------------
 
         if analysis["severity"] not in {
+
             "P1",
+
             "P2",
+
             "P3",
+
             "P4",
+
         }:
 
             raise ValueError(
@@ -152,7 +215,7 @@ class IncidentResponseAgent:
             )
 
         # ---------------------------------------------------------
-        # Validate confidence
+        # Validate root cause confidence
         # ---------------------------------------------------------
 
         if not isinstance(
@@ -173,6 +236,10 @@ class IncidentResponseAgent:
                 "root_cause_confidence "
                 "must be between 0 and 100."
             )
+
+        # ---------------------------------------------------------
+        # Validate AI confidence
+        # ---------------------------------------------------------
 
         if not isinstance(
             analysis["confidence"],
@@ -196,10 +263,15 @@ class IncidentResponseAgent:
         # ---------------------------------------------------------
 
         list_fields = [
+
             "historical_evidence",
+
             "recommended_actions",
+
             "short_term_actions",
+
             "long_term_prevention",
+
         ]
 
         for field in list_fields:
@@ -219,9 +291,13 @@ class IncidentResponseAgent:
         # ---------------------------------------------------------
 
         record = self.history.create_incident(
+
             incident=original_incident,
+
             analysis=analysis,
+
             historical_memories=memories,
+
         )
 
         print(
@@ -238,13 +314,17 @@ class IncidentResponseAgent:
         # Terminal output
         # ---------------------------------------------------------
 
-        print("\n" + "=" * 60)
+        print(
+            "\n" + "=" * 60
+        )
 
         print(
             "🚨 INCIDENT RESPONSE ANALYSIS"
         )
 
-        print("=" * 60)
+        print(
+            "=" * 60
+        )
 
         print(
             f"\nSeverity: "
@@ -276,33 +356,48 @@ class IncidentResponseAgent:
             f"{analysis['root_cause_confidence']}%"
         )
 
-        print("\nImmediate Actions:")
+        print(
+            "\nImmediate Actions:"
+        )
 
         for i, action in enumerate(
+
             analysis["recommended_actions"],
+
             1,
+
         ):
 
             print(
                 f"{i}. {action}"
             )
 
-        print("\nShort-Term Actions:")
+        print(
+            "\nShort-Term Actions:"
+        )
 
         for i, action in enumerate(
+
             analysis["short_term_actions"],
+
             1,
+
         ):
 
             print(
                 f"{i}. {action}"
             )
 
-        print("\nLong-Term Prevention:")
+        print(
+            "\nLong-Term Prevention:"
+        )
 
         for i, action in enumerate(
+
             analysis["long_term_prevention"],
+
             1,
+
         ):
 
             print(
@@ -311,7 +406,7 @@ class IncidentResponseAgent:
 
         print(
             f"\nAI Reasoning:\n"
-            f"{analysis['reasoning']}"
+            f"{analysis['reasoning_summary']}"
         )
 
         print(
@@ -324,13 +419,16 @@ class IncidentResponseAgent:
             f"{analysis['uncertainty']}"
         )
 
-        print("\n" + "=" * 60)
+        print(
+            "\n" + "=" * 60
+        )
 
         # ---------------------------------------------------------
         # Return result
         # ---------------------------------------------------------
 
         return {
+
             "incident": original_incident,
 
             "incident_id": record[
@@ -344,17 +442,23 @@ class IncidentResponseAgent:
             "historical_memories": memories,
 
             "analysis": analysis,
+
         }
 
     # =============================================================
-    # RECORD HUMAN FEEDBACK
+    # RECORD ENGINEER / TECHNICIAN REVIEW
     # =============================================================
 
     def record_resolution(
+
         self,
+
         incident_id: str,
+
         helpful: bool,
+
         resolution: str,
+
     ):
 
         resolution = resolution.strip()
@@ -370,9 +474,13 @@ class IncidentResponseAgent:
         # ---------------------------------------------------------
 
         record = self.history.add_feedback(
+
             incident_id=incident_id,
+
             helpful=helpful,
+
             resolution=resolution,
+
         )
 
         # ---------------------------------------------------------
@@ -380,6 +488,7 @@ class IncidentResponseAgent:
         # ---------------------------------------------------------
 
         learning_memory = f"""
+
 RESOLVED PRODUCTION INCIDENT
 
 Incident ID:
@@ -410,9 +519,11 @@ ACTUAL RESOLUTION:
 {resolution}
 
 This incident was reviewed by a human engineer.
+
 The resolution represents confirmed organizational
 experience and should be considered as historical
 evidence for future similar incidents.
+
 """
 
         # ---------------------------------------------------------
@@ -436,8 +547,11 @@ evidence for future similar incidents.
         )
 
         return {
+
             "incident_id": incident_id,
+
             "learned": True,
+
         }
 
     # =============================================================

@@ -1,6 +1,8 @@
+import time
 import streamlit as st
 
-from app.agent import IncidentResponseAgent
+from app.telemetry_manager import TelemetryManager
+from app.failure_predictor import FailurePredictor
 
 
 # ============================================================
@@ -9,72 +11,9 @@ from app.agent import IncidentResponseAgent
 
 st.set_page_config(
     page_title="Hindsight Incident Command Center",
-    page_icon="🚨",
+    page_icon="🧠",
     layout="wide",
-)
-
-
-# ============================================================
-# CSS
-# ============================================================
-
-st.markdown(
-"""
-<style>
-
-.block-container {
-    padding-top: 2rem;
-    padding-bottom: 3rem;
-    max-width: 1450px;
-}
-
-.hero-title {
-    font-size: 3rem;
-    font-weight: 800;
-}
-
-.hero-subtitle {
-    font-size: 1.1rem;
-    opacity: 0.7;
-}
-
-.metric-card {
-    border: 1px solid rgba(128,128,128,0.25);
-    border-radius: 14px;
-    padding: 1rem;
-    min-height: 110px;
-    background: rgba(128,128,128,0.05);
-}
-
-.metric-label {
-    font-size: 0.8rem;
-    opacity: 0.65;
-    text-transform: uppercase;
-}
-
-.metric-value {
-    font-size: 1.6rem;
-    font-weight: 750;
-    margin-top: 0.4rem;
-}
-
-.section-title {
-    font-size: 1.45rem;
-    font-weight: 750;
-    margin-top: 1.5rem;
-    margin-bottom: 0.8rem;
-}
-
-.reasoning {
-    border-left: 4px solid #4da3ff;
-    padding: 1rem;
-    border-radius: 8px;
-    background: rgba(77,163,255,0.08);
-}
-
-</style>
-""",
-unsafe_allow_html=True,
+    initial_sidebar_state="expanded",
 )
 
 
@@ -82,9 +21,40 @@ unsafe_allow_html=True,
 # SESSION STATE
 # ============================================================
 
-if "last_result" not in st.session_state:
+if "telemetry_manager" not in st.session_state:
+    st.session_state.telemetry_manager = TelemetryManager()
 
-    st.session_state.last_result = None
+if "telemetry" not in st.session_state:
+    st.session_state.telemetry = None
+
+if "simulation_running" not in st.session_state:
+    st.session_state.simulation_running = False
+
+if "simulation_mode" not in st.session_state:
+    st.session_state.simulation_mode = "healthy"
+
+if "prediction" not in st.session_state:
+    st.session_state.prediction = None
+
+if "investigation_result" not in st.session_state:
+    st.session_state.investigation_result = None
+
+
+# ============================================================
+# LOAD FAILURE PREDICTION MODEL
+# ============================================================
+
+try:
+    predictor = FailurePredictor()
+    predictor_available = True
+
+except Exception as e:
+    predictor = None
+    predictor_available = False
+
+    st.warning(
+        f"Failure prediction model unavailable: {e}"
+    )
 
 
 # ============================================================
@@ -93,307 +63,1015 @@ if "last_result" not in st.session_state:
 
 with st.sidebar:
 
-    st.markdown("## 🧠 Hindsight")
-
-    st.caption(
-        "Incident Command Center"
-    )
+    st.title("🧠 Hindsight")
+    st.caption("Incident Command Center")
 
     st.divider()
 
-    st.markdown("### Architecture")
+    st.subheader("Architecture")
 
     st.markdown(
         """
-Incident
+        📡 **Live Telemetry**
 
-↓
+        ↓
 
-Hindsight Recall
+        🔮 **Failure Prediction**
 
-↓
+        ↓
 
-Historical Evidence
+        🧠 **Hindsight Recall**
 
-↓
+        ↓
 
-Groq Reasoning
+        🤖 **GPT-OSS 120B**
 
-↓
+        ↓
 
-Human Review
+        🔍 **Root Cause Analysis**
 
-↓
+        ↓
 
-Confirmed Resolution
+        👨‍🔧 **Human Review**
 
-↓
+        ↓
 
-Hindsight Learning
-"""
+        🧠 **Hindsight Learning**
+        """
     )
 
     st.divider()
 
-    st.markdown("### Persistent Learning")
+    st.subheader("AI Components")
 
-    st.caption(
-        "Resolved incidents are stored as organizational "
-        "experience and can influence future investigations."
+    st.write("**Failure Prediction**")
+    st.write("Calibrated Multiclass Random Forest")
+
+    st.write("**Memory**")
+    st.write("Hindsight")
+
+    st.write("**Reasoning**")
+    st.write("GPT-OSS 120B")
+
+    st.divider()
+
+    st.subheader("Failure Classes")
+
+    st.write("• Database Connection Exhaustion")
+    st.write("• CPU Saturation")
+    st.write("• Memory Exhaustion")
+    st.write("• API Availability Degradation")
+    st.write("• Disk Exhaustion")
+    st.write("• Network Degradation")
+    st.write("• No Failure")
+
+
+# ============================================================
+# MAIN HEADER
+# ============================================================
+
+st.title("🧠 Hindsight Incident Command Center")
+
+st.write(
+    "AI-powered predictive incident response that learns "
+    "from historical production incidents."
+)
+
+st.write(
+    "Monitor system telemetry, predict failures before "
+    "they occur, investigate incidents, and capture "
+    "engineer-confirmed resolutions."
+)
+
+
+# ============================================================
+# LIVE SYSTEM TELEMETRY
+# ============================================================
+
+st.header("📡 Live System Telemetry")
+
+st.caption(
+    "Prototype telemetry is generated by the simulation "
+    "engine. In production, this can be connected to "
+    "Prometheus, Grafana, cloud monitoring, or application "
+    "metrics."
+)
+
+
+# ============================================================
+# SIMULATION CONTROLS
+# ============================================================
+
+control1, control2, control3 = st.columns(
+    [2.2, 2.2, 1],
+    gap="large",
+)
+
+
+with control1:
+
+    scenario = st.selectbox(
+        "Simulation scenario",
+
+        [
+            "healthy",
+            "database",
+            "cpu",
+            "memory",
+            "network",
+            "api",
+        ],
+
+        format_func=lambda x: {
+            "healthy": "🟢 Healthy System",
+            "database": "🔴 Database Failure",
+            "cpu": "🔴 CPU Saturation",
+            "memory": "🔴 Memory Exhaustion",
+            "network": "🔴 Network Degradation",
+            "api": "🔴 API Degradation",
+        }[x],
+
+        index=[
+            "healthy",
+            "database",
+            "cpu",
+            "memory",
+            "network",
+            "api",
+        ].index(
+            st.session_state.simulation_mode
+        ),
+    )
+
+
+with control2:
+
+    start_simulation = st.button(
+        "▶ Start / Restart Simulation",
+        type="primary",
+        use_container_width=True,
+    )
+
+
+with control3:
+
+    stop_simulation = st.button(
+        "■ Stop",
+        use_container_width=True,
     )
 
 
 # ============================================================
-# HERO
+# START SIMULATION
 # ============================================================
 
-st.markdown(
-"""
-<div class="hero-title">
-🚨 Hindsight Incident Command Center
-</div>
+if start_simulation:
 
-<div class="hero-subtitle">
-AI-powered incident response that learns from
-organizational experience.
-</div>
-""",
-unsafe_allow_html=True,
-)
-
-
-st.write(
-    "Investigate production incidents using historical "
-    "evidence and record confirmed resolutions for future learning."
-)
-
-
-# ============================================================
-# NEW INCIDENT
-# ============================================================
-
-st.markdown(
-    '<div class="section-title">📋 New Incident</div>',
-    unsafe_allow_html=True,
-)
-
-
-incident = st.text_area(
-    "Incident description",
-    height=200,
-    placeholder=(
-        "Payment API is returning HTTP 503 errors.\n"
-        "Database connections are timing out.\n"
-        "Connection pool utilization has reached 100%."
-    ),
-    label_visibility="collapsed",
-)
-
-
-# ============================================================
-# INVESTIGATE
-# ============================================================
-
-if st.button(
-    "🔎 Investigate Incident",
-    type="primary",
-    use_container_width=True,
-):
-
-    if not incident.strip():
-
-        st.warning(
-            "Please describe the incident."
-        )
-
-        st.stop()
-
-    if len(incident.strip()) < 20:
-
-        st.warning(
-            "Please provide more information about the incident."
-        )
-
-        st.stop()
-
-    agent = None
+    st.session_state.simulation_mode = scenario
 
     try:
 
-        with st.spinner(
-            "Searching Hindsight and analyzing incident..."
-        ):
-
-            agent = IncidentResponseAgent()
-
-            result = agent.investigate(
-                incident
+        st.session_state.telemetry = (
+            st.session_state.telemetry_manager.start(
+                scenario
             )
-
-        st.session_state.last_result = result
-
-        st.success(
-            "Investigation completed."
         )
+
+        st.session_state.simulation_running = True
+
+        st.session_state.prediction = None
 
     except Exception as e:
 
         st.error(
-            "Investigation failed."
+            f"Unable to start simulation: {e}"
         )
-
-        st.caption(
-            f"{type(e).__name__}: {e}"
-        )
-
-    finally:
-
-        if agent is not None:
-
-            agent.close()
 
 
 # ============================================================
-# DISPLAY LAST RESULT
+# STOP SIMULATION
 # ============================================================
 
-result = st.session_state.last_result
+if stop_simulation:
+
+    try:
+
+        st.session_state.telemetry_manager.stop()
+
+    except Exception:
+        pass
+
+    st.session_state.simulation_running = False
+
+
+# ============================================================
+# GET CURRENT TELEMETRY
+# ============================================================
+
+if st.session_state.simulation_running:
+
+    try:
+
+        sample = (
+            st.session_state.telemetry_manager.next_sample()
+        )
+
+        if sample is not None:
+            st.session_state.telemetry = sample
+
+    except Exception as e:
+
+        st.error(
+            f"Telemetry error: {e}"
+        )
+
+
+telemetry = st.session_state.telemetry
+
+
+# ============================================================
+# CURRENT TELEMETRY
+# ============================================================
+
+if telemetry:
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # CENTERED TELEMETRY TITLE
+    # --------------------------------------------------------
+
+    st.markdown(
+        """
+        <div style="
+            text-align:center;
+            font-size:2rem;
+            font-weight:700;
+            margin-bottom:1.5rem;
+        ">
+            📊 Current Telemetry
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+    # --------------------------------------------------------
+    # CENTER STREAMLIT METRICS
+    # --------------------------------------------------------
+
+    st.markdown(
+        """
+        <style>
+
+        div[data-testid="stMetric"] {
+            text-align: center !important;
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+        }
+
+        div[data-testid="stMetricLabel"] {
+            justify-content: center !important;
+            width: 100% !important;
+        }
+
+        div[data-testid="stMetricLabel"] p {
+            text-align: center !important;
+            width: 100% !important;
+        }
+
+        div[data-testid="stMetricValue"] {
+            justify-content: center !important;
+            width: 100% !important;
+        }
+
+        div[data-testid="stMetricValue"] > div {
+            text-align: center !important;
+            width: 100% !important;
+        }
+
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+    # ========================================================
+    # ROW 1
+    # ========================================================
+
+    col1, col2, col3, col4 = st.columns(
+        4,
+        gap="large",
+    )
+
+
+    with col1:
+
+        st.metric(
+            label="CPU",
+            value=f"{telemetry.get('cpu_percent', 0):.1f}%",
+        )
+
+
+    with col2:
+
+        st.metric(
+            label="Memory",
+            value=f"{telemetry.get('memory_percent', 0):.1f}%",
+        )
+
+
+    with col3:
+
+        st.metric(
+            label="Disk",
+            value=f"{telemetry.get('disk_percent', 0):.1f}%",
+        )
+
+
+    with col4:
+
+        st.metric(
+            label="DB Pool Usage",
+            value=f"{telemetry.get('db_pool_usage', 0):.1f}%",
+        )
+
+
+    # ========================================================
+    # ROW 2
+    # ========================================================
+
+    col1, col2, col3, col4 = st.columns(
+        4,
+        gap="large",
+    )
+
+
+    with col1:
+
+        st.metric(
+            label="DB Connections",
+            value=f"{telemetry.get('db_connections', 0):.1f}%",
+        )
+
+
+    with col2:
+
+        st.metric(
+            label="API Latency",
+            value=f"{telemetry.get('api_latency_ms', 0):.0f} ms",
+        )
+
+
+    with col3:
+
+        st.metric(
+            label="Error Rate",
+            value=f"{telemetry.get('error_rate', 0):.2f}%",
+        )
+
+
+    with col4:
+
+        st.metric(
+            label="Queue Depth",
+            value=f"{telemetry.get('queue_depth', 0):.0f}",
+        )
+
+
+    # ========================================================
+    # ROW 3
+    # ========================================================
+
+    col1, col2, col3 = st.columns(
+        3,
+        gap="large",
+    )
+
+
+    with col1:
+
+        st.metric(
+            label="Request Rate",
+            value=f"{telemetry.get('request_rate', 0):.0f}/s",
+        )
+
+
+    with col2:
+
+        st.metric(
+            label="Network Latency",
+            value=f"{telemetry.get('network_latency_ms', 0):.0f} ms",
+        )
+
+
+    with col3:
+
+        st.metric(
+            label="Traffic Growth",
+            value=f"{telemetry.get('traffic_growth_percent', 0):.1f}%",
+        )
+
+
+# ============================================================
+# FAILURE PREDICTION
+# ============================================================
+
+if telemetry and predictor_available:
+
+    try:
+
+        prediction = predictor.predict(
+            telemetry
+        )
+
+        st.session_state.prediction = prediction
+
+    except Exception:
+
+        try:
+
+            prediction = predictor.predict_failure(
+                telemetry
+            )
+
+            st.session_state.prediction = prediction
+
+        except Exception as e:
+
+            st.session_state.prediction = None
+
+            st.error(
+                f"Failure prediction error: {e}"
+            )
+
+
+prediction = st.session_state.prediction
+
+
+# ============================================================
+# PREDICTIVE FAILURE INTELLIGENCE
+# ============================================================
+
+if prediction:
+
+    st.divider()
+
+    st.header(
+        "🔮 Predictive Failure Intelligence"
+    )
+
+
+    risk = int(
+        prediction.get(
+            "failure_risk",
+            0,
+        )
+    )
+
+
+    risk_level = str(
+        prediction.get(
+            "risk_level",
+            "LOW",
+        )
+    )
+
+
+    predicted_failure = str(
+        prediction.get(
+            "predicted_failure",
+            "No immediate failure predicted",
+        )
+    )
+
+
+    failure_type = str(
+        prediction.get(
+            "predicted_failure_type",
+            prediction.get(
+                "failure_type",
+                "No Failure",
+            ),
+        )
+    )
+
+
+    type_probability = float(
+        prediction.get(
+            "predicted_failure_probability",
+            prediction.get(
+                "type_probability",
+                0,
+            ),
+        )
+    )
+
+
+    risk_window = str(
+        prediction.get(
+            "risk_window",
+            "No immediate failure window detected",
+        )
+    )
+
+
+    confidence = float(
+        prediction.get(
+            "prediction_confidence",
+            0,
+        )
+    )
+
+
+    model_name = str(
+        prediction.get(
+            "model",
+            "Calibrated Multiclass Random Forest",
+        )
+    )
+
+
+    # ========================================================
+    # RISK SUMMARY
+    # ========================================================
+
+    col1, col2, col3 = st.columns(
+        3,
+        gap="large",
+    )
+
+
+    with col1:
+
+        st.metric(
+            "Failure Risk",
+            f"{risk}%",
+        )
+
+
+    with col2:
+
+        st.metric(
+            "Risk Level",
+            risk_level,
+        )
+
+
+    with col3:
+
+        st.metric(
+            "Prediction",
+            predicted_failure,
+        )
+
+
+    st.write("Failure Risk")
+
+    st.progress(
+        max(
+            0,
+            min(
+                100,
+                risk,
+            ),
+        ) / 100
+    )
+
+
+    # ========================================================
+    # PREDICTION DETAILS
+    # ========================================================
+
+    st.subheader(
+        "Prediction Details"
+    )
+
+
+    col1, col2, col3 = st.columns(
+        3,
+        gap="large",
+    )
+
+
+    with col1:
+
+        st.metric(
+            "Risk Window",
+            risk_window,
+        )
+
+
+    with col2:
+
+        st.metric(
+            "Prediction Confidence",
+            f"{confidence:.2f}%",
+        )
+
+
+    with col3:
+
+        st.metric(
+            "Model",
+            model_name,
+        )
+
+
+    # ========================================================
+    # PREDICTED FAILURE TYPE
+    # ========================================================
+
+    st.subheader(
+        "🎯 Predicted Failure Type"
+    )
+
+
+    col1, col2 = st.columns(
+        2,
+        gap="large",
+    )
+
+
+    with col1:
+
+        st.metric(
+            "Failure Type",
+            failure_type,
+        )
+
+
+    with col2:
+
+        st.metric(
+            "Type Probability",
+            f"{type_probability:.2f}%",
+        )
+
+
+    # ========================================================
+    # FAILURE TYPE PROBABILITIES
+    # ========================================================
+
+    probabilities = prediction.get(
+        "failure_type_probabilities",
+        [],
+    )
+
+
+    if probabilities:
+
+        st.subheader(
+            "📊 Failure Type Probabilities"
+        )
+
+
+        for item in probabilities:
+
+            name = item.get(
+                "display_name",
+                item.get(
+                    "failure_type",
+                    "Unknown",
+                ),
+            )
+
+
+            probability = float(
+                item.get(
+                    "probability",
+                    0,
+                )
+            )
+
+
+            col1, col2 = st.columns(
+                [5, 1]
+            )
+
+
+            with col1:
+
+                st.write(
+                    name
+                )
+
+
+            with col2:
+
+                st.write(
+                    f"{probability:.2f}%"
+                )
+
+
+            st.progress(
+                max(
+                    0,
+                    min(
+                        100,
+                        probability,
+                    ),
+                ) / 100
+            )
+
+
+    # ========================================================
+    # IMPORTANT RISK INDICATORS
+    # ========================================================
+
+    indicators = prediction.get(
+        "important_indicators",
+        prediction.get(
+            "risk_indicators",
+            [],
+        ),
+    )
+
+
+    if indicators:
+
+        st.subheader(
+            "⚠️ Current Risk Indicators"
+        )
+
+
+        for indicator in indicators:
+
+            if isinstance(
+                indicator,
+                dict,
+            ):
+
+                name = indicator.get(
+                    "feature",
+                    indicator.get(
+                        "name",
+                        "Unknown",
+                    ),
+                )
+
+
+                value = indicator.get(
+                    "value",
+                    "",
+                )
+
+
+                severity = indicator.get(
+                    "severity",
+                    "",
+                )
+
+
+                if severity:
+
+                    st.write(
+                        f"**{name}:** {value} — "
+                        f"**{severity}**"
+                    )
+
+                else:
+
+                    st.write(
+                        f"**{name}:** {value}"
+                    )
+
+            else:
+
+                st.write(
+                    f"• {indicator}"
+                )
+
+
+# ============================================================
+# INCIDENT INVESTIGATION
+# ============================================================
+
+st.divider()
+
+st.header(
+    "🔍 Incident Investigation"
+)
+
+
+incident_text = st.text_area(
+
+    "Incident Description",
+
+    value=(
+        "The Payment API is returning HTTP 503 errors. "
+        "Database connections are timing out and the "
+        "database connection pool is nearly full. "
+        "API latency and error rate are increasing, "
+        "and the request queue is growing."
+    ),
+
+    height=140,
+)
+
+
+if st.button(
+    "🧠 Investigate Current System State",
+    type="primary",
+    use_container_width=True,
+):
+
+    if not incident_text.strip():
+
+        st.warning(
+            "Please enter an incident description."
+        )
+
+    else:
+
+        try:
+
+            from app.agent import IncidentResponseAgent
+
+            agent = IncidentResponseAgent()
+
+
+            with st.spinner(
+                "Investigating incident with Hindsight and GPT-OSS 120B..."
+            ):
+
+                try:
+
+                    result = agent.investigate(
+                        incident_text,
+                        telemetry,
+                    )
+
+                except TypeError:
+
+                    result = agent.investigate(
+                        incident_text,
+                    )
+
+
+            st.session_state.investigation_result = result
+
+
+            try:
+                agent.close()
+            except Exception:
+                pass
+
+
+            st.success(
+                "Incident investigation completed."
+            )
+
+            st.rerun()
+
+
+        except Exception as e:
+
+            st.error(
+                f"Incident investigation failed: {e}"
+            )
+
+            st.exception(e)
+
+
+# ============================================================
+# INCIDENT RESPONSE ANALYSIS
+# ============================================================
+
+result = st.session_state.investigation_result
 
 
 if result:
 
-    analysis = result["analysis"]
-
-    memories = result[
-        "historical_memories"
-    ]
-
-    incident_id = result[
-        "incident_id"
-    ]
-
-    # ========================================================
-    # INCIDENT ID
-    # ========================================================
-
     st.divider()
 
-    st.caption(
-        f"Incident ID: `{incident_id}`"
+    st.header(
+        "🚨 Incident Response Analysis"
     )
+
+
+    analysis = result.get(
+        "analysis",
+        result,
+    )
+
+
+    incident_id = result.get(
+        "incident_id",
+        "",
+    )
+
 
     # ========================================================
-    # METRICS
+    # INCIDENT OVERVIEW
     # ========================================================
 
-    severity = analysis.get(
-        "severity",
-        "UNKNOWN",
+    st.subheader(
+        "Incident Overview"
     )
 
-    service = analysis.get(
-        "service",
-        "Unknown",
+
+    col1, col2, col3, col4 = st.columns(
+        4,
+        gap="large",
     )
 
-    category = analysis.get(
-        "category",
-        "Unknown",
-    )
-
-    confidence = analysis.get(
-        "confidence",
-        0,
-    )
-
-    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
 
-        st.markdown(
-            f"""
-<div class="metric-card">
-<div class="metric-label">Severity</div>
-<div class="metric-value">{severity}</div>
-</div>
-""",
-            unsafe_allow_html=True,
+        st.metric(
+            "Severity",
+            str(
+                analysis.get(
+                    "severity",
+                    "Unknown",
+                )
+            ),
         )
+
 
     with col2:
 
-        st.markdown(
-            f"""
-<div class="metric-card">
-<div class="metric-label">Service</div>
-<div class="metric-value">{service}</div>
-</div>
-""",
-            unsafe_allow_html=True,
+        st.metric(
+            "Service",
+            str(
+                analysis.get(
+                    "service",
+                    "Unknown",
+                )
+            ),
         )
+
 
     with col3:
 
-        st.markdown(
-            f"""
-<div class="metric-card">
-<div class="metric-label">Category</div>
-<div class="metric-value">{category}</div>
-</div>
-""",
-            unsafe_allow_html=True,
+        st.metric(
+            "Category",
+            str(
+                analysis.get(
+                    "category",
+                    "Unknown",
+                )
+            ),
         )
+
 
     with col4:
 
-        st.markdown(
-            f"""
-<div class="metric-card">
-<div class="metric-label">Confidence</div>
-<div class="metric-value">{confidence}%</div>
-</div>
-""",
-            unsafe_allow_html=True,
+        st.metric(
+            "AI Confidence",
+            f"{analysis.get('confidence', 0)}%",
         )
 
+
+    if incident_id:
+
+        st.caption(
+            f"Incident ID: {incident_id}"
+        )
+
+
     # ========================================================
-    # ASSESSMENT
+    # INCIDENT SUMMARY
     # ========================================================
 
-    st.divider()
-
-    st.markdown(
-        '<div class="section-title">📊 Incident Assessment</div>',
-        unsafe_allow_html=True,
+    st.subheader(
+        "📌 Incident Summary"
     )
 
-    col1, col2 = st.columns(2)
 
-    with col1:
-
-        st.subheader(
-            "Incident Summary"
+    st.write(
+        analysis.get(
+            "incident_summary",
+            "No summary available.",
         )
+    )
 
-        st.write(
-            analysis.get(
-                "incident_summary",
-                "Unavailable",
-            )
+
+    # ========================================================
+    # ROOT CAUSE
+    # ========================================================
+
+    st.subheader(
+        "🎯 Likely Root Cause"
+    )
+
+
+    st.write(
+        analysis.get(
+            "root_cause",
+            "No root cause identified.",
         )
+    )
 
-    with col2:
 
-        st.subheader(
-            "Likely Root Cause"
-        )
+    # ========================================================
+    # ROOT CAUSE CONFIDENCE
+    # ========================================================
 
-        st.write(
-            analysis.get(
-                "root_cause",
-                "Unknown",
-            )
-        )
+    if "root_cause_confidence" in analysis:
 
         root_confidence = int(
             analysis.get(
@@ -402,130 +1080,197 @@ if result:
             )
         )
 
-        st.progress(
-            root_confidence / 100
+
+        st.metric(
+            "Root Cause Confidence",
+            f"{root_confidence}%",
         )
 
-        st.caption(
-            f"Root cause confidence: "
-            f"{root_confidence}%"
-        )
-
-    # ========================================================
-    # REASONING
-    # ========================================================
-
-    st.divider()
-
-    st.markdown(
-        '<div class="section-title">🧠 AI Reasoning</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.markdown(
-        f"""
-<div class="reasoning">
-{analysis.get("reasoning", "Unavailable")}
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-
-    # ========================================================
-    # ACTIONS
-    # ========================================================
-
-    st.divider()
-
-    st.markdown(
-        '<div class="section-title">⚡ Immediate Actions</div>',
-        unsafe_allow_html=True,
-    )
-
-    for i, action in enumerate(
-        analysis.get(
-            "recommended_actions",
-            [],
-        ),
-        1,
-    ):
-
-        st.markdown(
-            f"**{i}.** {action}"
-        )
-
-    st.markdown(
-        '<div class="section-title">🔧 Short-Term Remediation</div>',
-        unsafe_allow_html=True,
-    )
-
-    for i, action in enumerate(
-        analysis.get(
-            "short_term_actions",
-            [],
-        ),
-        1,
-    ):
-
-        st.markdown(
-            f"**{i}.** {action}"
-        )
-
-    st.markdown(
-        '<div class="section-title">🛡️ Long-Term Prevention</div>',
-        unsafe_allow_html=True,
-    )
-
-    for i, action in enumerate(
-        analysis.get(
-            "long_term_prevention",
-            [],
-        ),
-        1,
-    ):
-
-        st.markdown(
-            f"**{i}.** {action}"
-        )
 
     # ========================================================
     # HISTORICAL EVIDENCE
     # ========================================================
 
-    st.divider()
-
-    st.markdown(
-        '<div class="section-title">🧠 Historical Evidence</div>',
-        unsafe_allow_html=True,
+    st.subheader(
+        "🧠 Historical Evidence"
     )
 
-    st.caption(
-        f"{len(memories)} historical memories retrieved."
+
+    historical = analysis.get(
+        "historical_evidence",
+        [],
     )
 
-    for i, memory in enumerate(
-        memories,
-        1,
-    ):
 
-        with st.expander(
-            f"Historical Memory {i}"
+    if historical:
+
+        for evidence in historical:
+
+            if isinstance(
+                evidence,
+                dict,
+            ):
+
+                st.write(
+                    evidence.get(
+                        "incident",
+                        str(evidence),
+                    )
+                )
+
+                if evidence.get(
+                    "relevance"
+                ):
+
+                    st.caption(
+                        evidence[
+                            "relevance"
+                        ]
+                    )
+
+            else:
+
+                st.write(
+                    evidence
+                )
+
+    else:
+
+        st.info(
+            "No historical evidence available."
+        )
+
+
+    # ========================================================
+    # IMMEDIATE ACTIONS
+    # ========================================================
+
+    st.subheader(
+        "⚡ Immediate Actions"
+    )
+
+
+    actions = analysis.get(
+        "recommended_actions",
+        [],
+    )
+
+
+    if actions:
+
+        for i, action in enumerate(
+            actions,
+            1,
         ):
 
             st.write(
-                memory
+                f"**{i}.** {action}"
             )
+
+    else:
+
+        st.write(
+            "No immediate actions returned."
+        )
+
+
+    # ========================================================
+    # SHORT TERM ACTIONS
+    # ========================================================
+
+    st.subheader(
+        "🔧 Short-Term Actions"
+    )
+
+
+    actions = analysis.get(
+        "short_term_actions",
+        [],
+    )
+
+
+    if actions:
+
+        for i, action in enumerate(
+            actions,
+            1,
+        ):
+
+            st.write(
+                f"**{i}.** {action}"
+            )
+
+    else:
+
+        st.write(
+            "No short-term actions returned."
+        )
+
+
+    # ========================================================
+    # LONG TERM PREVENTION
+    # ========================================================
+
+    st.subheader(
+        "🛡️ Long-Term Prevention"
+    )
+
+
+    actions = analysis.get(
+        "long_term_prevention",
+        [],
+    )
+
+
+    if actions:
+
+        for i, action in enumerate(
+            actions,
+            1,
+        ):
+
+            st.write(
+                f"**{i}.** {action}"
+            )
+
+    else:
+
+        st.write(
+            "No long-term prevention actions returned."
+        )
+
+
+    # ========================================================
+    # AI REASONING
+    # ========================================================
+
+    st.subheader(
+        "🤖 AI Reasoning"
+    )
+
+
+    reasoning = analysis.get(
+        "reasoning_summary",
+        analysis.get(
+            "reasoning",
+            "No reasoning available.",
+        ),
+    )
+
+
+    st.info(
+        reasoning
+    )
+
 
     # ========================================================
     # UNCERTAINTY
     # ========================================================
 
-    st.divider()
-
-    st.markdown(
-        '<div class="section-title">⚠️ Uncertainty</div>',
-        unsafe_allow_html=True,
+    st.subheader(
+        "⚠️ Uncertainty"
     )
+
 
     st.warning(
         analysis.get(
@@ -534,98 +1279,107 @@ if result:
         )
     )
 
+
     # ========================================================
-    # HUMAN FEEDBACK
+    # ENGINEER / TECHNICIAN REVIEW
     # ========================================================
 
     st.divider()
 
-    st.markdown(
-        '<div class="section-title">👨‍💻 Human Resolution Review</div>',
-        unsafe_allow_html=True,
+    st.header(
+        "🧑‍🔧 Engineer / Technician Review"
     )
 
-    st.info(
-        "The AI recommendation should be reviewed by an "
-        "engineer. Once the incident is resolved, record "
-        "what actually fixed the problem."
+
+    st.write(
+        "The AI analysis is a recommendation. "
+        "The engineer or technician should confirm "
+        "what actually happened and record the real "
+        "resolution."
     )
 
-    feedback = st.radio(
+
+    helpful = st.radio(
         "Was the AI recommendation helpful?",
         [
             "Helpful",
             "Not Helpful",
         ],
         horizontal=True,
-        key=f"feedback_{incident_id}",
     )
+
 
     resolution = st.text_area(
         "What actually resolved the incident?",
         placeholder=(
-            "Example:\n"
-            "Increased the database connection pool from "
-            "50 to 100 and restarted the affected service. "
-            "Latency returned to normal."
+            "Describe the actual fix performed by "
+            "the technician or engineer..."
         ),
-        key=f"resolution_{incident_id}",
+        height=130,
     )
 
+
     if st.button(
-        "🧠 Record Resolution & Teach Hindsight",
+        "🧠 Save Technician Review",
         type="primary",
         use_container_width=True,
-        key=f"learn_{incident_id}",
     ):
 
         if not resolution.strip():
 
             st.warning(
-                "Please describe the actual resolution "
-                "before teaching the system."
+                "Please enter the actual resolution."
+            )
+
+        elif not incident_id:
+
+            st.error(
+                "Incident ID is missing."
             )
 
         else:
 
-            agent = None
-
             try:
 
+                from app.agent import IncidentResponseAgent
+
+                review_agent = (
+                    IncidentResponseAgent()
+                )
+
+
                 with st.spinner(
-                    "Recording resolution and updating organizational memory..."
+                    "Saving technician review and teaching Hindsight..."
                 ):
 
-                    agent = IncidentResponseAgent()
-
-                    agent.record_resolution(
+                    review_agent.record_resolution(
                         incident_id=incident_id,
                         helpful=(
-                            feedback == "Helpful"
+                            helpful == "Helpful"
                         ),
                         resolution=resolution,
                     )
 
+
+                try:
+                    review_agent.close()
+                except Exception:
+                    pass
+
+
                 st.success(
-                    "🧠 Resolution stored. "
+                    "✅ Technician review saved. "
                     "Hindsight has learned from this incident."
                 )
+
 
             except Exception as e:
 
                 st.error(
-                    "The resolution could not be stored."
+                    f"Unable to save technician review: {e}"
                 )
 
-                st.caption(
-                    f"{type(e).__name__}: {e}"
-                )
-
-            finally:
-
-                if agent is not None:
-
-                    agent.close()
+                st.exception(e)
 
 
 # ============================================================
@@ -634,25 +1388,26 @@ if result:
 
 st.divider()
 
-st.markdown(
-    '<div class="section-title">📚 Incident Learning History</div>',
-    unsafe_allow_html=True,
+st.header(
+    "📚 Incident Learning History"
 )
 
 
-history_agent = None
-
 try:
 
-    history_agent = IncidentResponseAgent()
+    from app.incident_history import IncidentHistory
 
-    history = history_agent.get_history()
+    history_manager = IncidentHistory()
 
-finally:
+    history = history_manager.get_all()
 
-    if history_agent is not None:
+except Exception as e:
 
-        history_agent.close()
+    history = []
+
+    st.warning(
+        f"Unable to load incident history: {e}"
+    )
 
 
 if not history:
@@ -664,80 +1419,149 @@ if not history:
 else:
 
     st.caption(
-        f"{len(history)} incident(s) stored locally."
+        f"{len(history)} incident(s) stored."
     )
+
 
     for record in reversed(history):
 
-        status = (
-            "🧠 Learned"
-            if record.get("learned")
-            else "⏳ Awaiting resolution"
+        incident_id_history = record.get(
+            "incident_id",
+            "",
         )
 
+        severity = record.get(
+            "severity",
+            "UNKNOWN",
+        )
+
+        service = record.get(
+            "service",
+            "Unknown",
+        )
+
+        learned = record.get(
+            "learned",
+            False,
+        )
+
+
+        status = (
+            "🧠 Learned"
+            if learned
+            else "⏳ Awaiting Review"
+        )
+
+
         with st.expander(
-            f"{status} · "
-            f"{record['severity']} · "
-            f"{record['service']} · "
-            f"{record['incident_id'][:8]}"
+            f"{status} • "
+            f"{severity} • "
+            f"{service}"
         ):
 
-            st.markdown(
+            st.write(
                 f"**Incident ID:** "
-                f"`{record['incident_id']}`"
+                f"{incident_id_history}"
             )
 
-            st.markdown(
+
+            st.write(
                 f"**Created:** "
-                f"{record['created_at']}"
+                f"{record.get('created_at', '')}"
             )
 
-            st.markdown(
+
+            st.write(
                 f"**Severity:** "
-                f"{record['severity']}"
+                f"{severity}"
             )
 
-            st.markdown(
+
+            st.write(
                 f"**Service:** "
-                f"{record['service']}"
+                f"{service}"
             )
 
-            st.markdown(
+
+            st.write(
                 f"**Category:** "
-                f"{record['category']}"
+                f"{record.get('category', 'Unknown')}"
             )
 
-            st.markdown(
-                f"**Root Cause:** "
-                f"{record['root_cause']}"
+
+            st.subheader(
+                "Original Incident"
             )
 
-            st.markdown(
+
+            st.write(
+                record.get(
+                    "incident",
+                    "",
+                )
+            )
+
+
+            st.subheader(
+                "AI Suggested Root Cause"
+            )
+
+
+            st.write(
+                record.get(
+                    "root_cause",
+                    "",
+                )
+            )
+
+
+            st.write(
                 f"**AI Confidence:** "
-                f"{record['confidence']}%"
+                f"{record.get('confidence', 0)}%"
             )
 
-            if record.get("feedback"):
 
-                st.markdown(
-                    f"**Human Feedback:** "
-                    f"{record['feedback']}"
-                )
+            feedback = record.get(
+                "feedback",
+                None,
+            )
 
-            if record.get("resolution"):
 
-                st.markdown(
-                    "**Actual Resolution:**"
-                )
+            if feedback:
 
                 st.write(
-                    record["resolution"]
+                    f"**Technician Feedback:** "
+                    f"{feedback}"
                 )
 
-            st.markdown(
-                f"**Hindsight Learned:** "
-                f"{'Yes' if record.get('learned') else 'No'}"
+
+            resolution = record.get(
+                "resolution",
+                None,
             )
+
+
+            if resolution:
+
+                st.subheader(
+                    "🔧 Actual Resolution"
+                )
+
+                st.success(
+                    resolution
+                )
+
+
+                st.write(
+                    "🧠 This resolution has been "
+                    "stored as organizational knowledge."
+                )
+
+            else:
+
+                st.write(
+                    "⏳ Waiting for technician-confirmed resolution."
+                )
 
 
 # ============================================================
@@ -747,7 +1571,18 @@ else:
 st.divider()
 
 st.caption(
-    "Hindsight Incident Command Center · "
-    "AI-assisted incident response · "
+    "Hindsight Incident Command Center • "
+    "AI-assisted predictive incident response • "
     "Human review required for production actions"
 )
+
+
+# ============================================================
+# AUTO REFRESH
+# ============================================================
+
+if st.session_state.simulation_running:
+
+    time.sleep(1)
+
+    st.rerun()

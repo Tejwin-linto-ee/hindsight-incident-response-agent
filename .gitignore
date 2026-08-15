@@ -21,3 +21,13 @@ data/incident_history.json
 # OS files
 .DS_Store
 Thumbs.db
+
+# Backup virtual environments
+venv_python311_backup/
+venv_python311_backup2/
+
+# Old project backup
+backup_before_polish/
+
+# Old incident history
+data/incident_history_old.json

@@ -1,0 +1,509 @@
+===== MAIN.PY =====
+import streamlit as st
+
+from app.agent import IncidentResponseAgent
+
+
+st.set_page_config(
+    page_title="Hindsight Incident Response Agent",
+    page_icon="🚨",
+    layout="wide",
+)
+
+st.title("🚨 Hindsight Incident Response Agent")
+st.caption("AI-powered incident response using persistent organizational memory")
+
+st.markdown(
+    """
+    Enter a production incident below. The agent will search historical
+    incidents stored in Hindsight and use that experience to generate
+    an incident response recommendation.
+    """
+)
+
+incident = st.text_area(
+    "Describe the incident",
+    height=220,
+    placeholder=(
+        "Example:\n"
+        "Payment API is returning HTTP 503 errors. "
+        "Database connection pool utilization is at 100%..."
+    ),
+)
+
+if st.button("🔎 Investigate Incident", type="primary"):
+    if not incident.strip():
+        st.warning("Please describe the incident first.")
+    else:
+        with st.spinner("Investigating incident using organizational memory..."):
+            agent = IncidentResponseAgent()
+
+            try:
+                result = agent.investigate(incident)
+
+                st.divider()
+
+                st.subheader("🚨 AI Incident Response")
+
+                st.markdown(result["analysis"])
+
+                st.divider()
+
+                st.subheader("🧠 Historical Evidence")
+
+                memories = result["historical_memories"]
+
+                if memories:
+                    for i, memory in enumerate(memories, 1):
+                        with st.expander(f"Historical Memory {i}"):
+                            st.write(memory)
+                else:
+                    st.info("No relevant historical incidents were found.")
+
+            except Exception as e:
+                st.error(f"An error occurred: {e}")
+
+            finally:
+                agent.close()
+===== AGENT.PY =====
+from app.hindsight_memory import IncidentMemory
+from app.llm import IncidentLLM
+
+
+class IncidentResponseAgent:
+    def __init__(self):
+        self.memory = IncidentMemory()
+        self.llm = IncidentLLM()
+
+    def investigate(self, incident: str):
+        print("\n🔎 Investigating incident...")
+        print("=" * 60)
+        print(incident.strip())
+
+        # Step 1: Search organizational memory
+        results = self.memory.find_similar_incidents(incident)
+
+        print("\n🧠 Retrieved historical incidents:")
+        print(f"Found {len(results)} relevant memories.")
+
+        # Limit the context sent to the LLM
+        top_results = results[:5]
+
+        memories = []
+
+        for result in top_results:
+            memories.append(result.text)
+
+        # Step 2: Ask the LLM to reason using historical memory
+        print("\n🤖 Analyzing incident with historical context...")
+
+        analysis = self.llm.analyze(
+            incident=incident,
+            memories=memories,
+        )
+
+        print("\n" + "=" * 60)
+        print("🚨 INCIDENT RESPONSE ANALYSIS")
+        print("=" * 60)
+        print(analysis)
+
+        return {
+            "incident": incident,
+            "historical_memories": memories,
+            "analysis": analysis,
+        }
+
+    def close(self):
+        self.memory.close()
+===== HINDSIGHT_MEMORY.PY =====
+import os
+from dotenv import load_dotenv
+from hindsight_client import Hindsight
+
+load_dotenv()
+
+
+class IncidentMemory:
+    def __init__(self):
+        self.bank_id = os.getenv("HINDSIGHT_BANK_ID")
+
+        self.client = Hindsight(
+            base_url=os.getenv("HINDSIGHT_BASE_URL"),
+            api_key=os.getenv("HINDSIGHT_API_KEY"),
+        )
+
+    def remember_incident(self, incident: str):
+        """Store a resolved incident in Hindsight."""
+        return self.client.retain(
+            bank_id=self.bank_id,
+            content=incident,
+            context="Production incident and resolution history",
+        )
+
+    def find_similar_incidents(self, query: str):
+        """Retrieve relevant incidents from Hindsight."""
+        return self.client.recall(
+            bank_id=self.bank_id,
+            query=query,
+        )
+
+    def close(self):
+        """Close the Hindsight client connection."""
+        self.client.close()
+===== LLM.PY =====
+import os
+
+from dotenv import load_dotenv
+from groq import Groq
+
+load_dotenv()
+
+
+class IncidentLLM:
+    def __init__(self):
+        api_key = os.getenv("GROQ_API_KEY")
+
+        if not api_key:
+            raise ValueError("GROQ_API_KEY was not found in .env")
+
+        self.client = Groq(api_key=api_key)
+
+    def analyze(self, incident: str, memories: list[str]) -> str:
+        memory_context = "\n\n".join(
+            f"Historical Incident {i + 1}:\n{memory}"
+            for i, memory in enumerate(memories)
+        )
+
+        prompt = f"""
+You are an incident response engineer.
+
+Analyze the following production incident using the historical incidents
+retrieved from the organization's memory.
+
+NEW INCIDENT:
+{incident}
+
+HISTORICAL INCIDENTS:
+{memory_context}
+
+Provide your response using exactly these sections:
+
+1. INCIDENT ASSESSMENT
+2. LIKELY ROOT CAUSE
+3. RECOMMENDED ACTION
+4. WHY THIS ACTION
+5. CONFIDENCE
+6. RELEVANT HISTORICAL INCIDENTS
+
+Important:
+- Base your reasoning on the historical incidents when relevant.
+- Do not claim certainty when the evidence is insufficient.
+- Prefer previously successful resolutions when the circumstances are similar.
+- Clearly distinguish historical evidence from your own inference.
+"""
+
+        response = self.client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a careful production incident response engineer.",
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            temperature=0.2,
+        )
+
+        return response.choices[0].message.content
+===== LOAD_INCIDENTS.PY =====
+import json
+
+from app.hindsight_memory import IncidentMemory
+
+
+def load_incidents():
+    with open("data/incidents.json", "r", encoding="utf-8") as file:
+        incidents = json.load(file)
+
+    memory = IncidentMemory()
+
+    try:
+        for incident in incidents:
+            incident_text = f"""
+Incident ID: {incident['incident_id']}
+Service: {incident['service']}
+Severity: {incident['severity']}
+Error: {incident['error']}
+
+Symptoms:
+{', '.join(incident['symptoms'])}
+
+Root Cause:
+{incident['root_cause']}
+
+Resolution:
+{incident['resolution']}
+
+Outcome:
+{incident['outcome']}
+"""
+
+            print(f"Storing {incident['incident_id']}...")
+
+            result = memory.remember_incident(incident_text)
+
+            if result.success:
+                print(f"✓ {incident['incident_id']} stored successfully")
+            else:
+                print(f"✗ Failed to store {incident['incident_id']}")
+
+    finally:
+        memory.close()
+
+
+if __name__ == "__main__":
+    load_incidents()
+===== REQUIREMENTS.TXT =====
+streamlit
+python-dotenv
+hindsight-client
+groq
+pytest
+
+===== README.MD =====
+# \# 🚨 Hindsight Incident Response Agent
+
+# 
+
+# > AI-powered incident response that uses persistent organizational memory to learn from past incidents.
+
+# 
+
+# \## 🎯 Problem
+
+# 
+
+# When a production incident occurs, engineers often spend valuable time searching through old incident reports, logs, tickets, and documentation to determine whether a similar problem has happened before.
+
+# 
+
+# Traditional AI assistants can analyze the current incident, but they may not have access to the organization's historical incident knowledge.
+
+# 
+
+# This project addresses that gap by combining an AI reasoning model with persistent incident memory.
+
+# 
+
+# \---
+
+# 
+
+# \## 💡 Solution
+
+# 
+
+# The \*\*Hindsight Incident Response Agent\*\* analyzes a new production incident and retrieves relevant historical incidents from organizational memory.
+
+# 
+
+# The retrieved historical context is then provided to an AI reasoning model, which generates:
+
+# 
+
+# \- 🚨 Incident assessment
+
+# \- 🔍 Likely root cause
+
+# \- 🛠 Recommended action
+
+# \- 💡 Why the action is recommended
+
+# \- 📊 Confidence assessment
+
+# \- 🧠 Relevant historical incidents
+
+# 
+
+# This allows the agent to reason using both the current incident and previous organizational experience.
+
+# 
+
+# \---
+
+# 
+
+# \## 🧠 How It Works
+
+# 
+
+# ```text
+
+# &#x20;                   NEW INCIDENT
+
+# &#x20;                        │
+
+# &#x20;                        ▼
+
+# &#x20;             ┌────────────────────┐
+
+# &#x20;             │ Incident Response  │
+
+# &#x20;             │      Agent         │
+
+# &#x20;             └─────────┬──────────┘
+
+# &#x20;                       │
+
+# &#x20;                       ▼
+
+# &#x20;             ┌────────────────────┐
+
+# &#x20;             │ Hindsight Memory   │
+
+# &#x20;             │      Recall        │
+
+# &#x20;             └─────────┬──────────┘
+
+# &#x20;                       │
+
+# &#x20;                       ▼
+
+# &#x20;             Historical Incidents
+
+# &#x20;                       │
+
+# &#x20;                       ▼
+
+# &#x20;             ┌────────────────────┐
+
+# &#x20;             │    Groq LLM        │
+
+# &#x20;             │ AI Reasoning       │
+
+# &#x20;             └─────────┬──────────┘
+
+# &#x20;                       │
+
+# &#x20;                       ▼
+
+# &#x20;             Incident Analysis
+
+# &#x20;                       │
+
+# &#x20;         ┌─────────────┼─────────────┐
+
+# &#x20;         ▼             ▼             ▼
+
+# &#x20;     Root Cause   Recommended    Confidence
+
+# &#x20;                    Action
+
+
+===== TEST_AGENT.PY =====
+from app.agent import IncidentResponseAgent
+
+
+def test_incident_response():
+    new_incident = """
+    The Payment API is returning HTTP 503 errors.
+    Payment requests are failing and database connections are timing out.
+    Database connection pool utilization has reached 100%.
+    The service is experiencing high request latency.
+    """
+
+    agent = IncidentResponseAgent()
+
+    try:
+        result = agent.investigate(new_incident)
+
+        assert isinstance(result, dict)
+        assert "historical_memories" in result
+
+        memories = result["historical_memories"]
+
+        print("\n========================================")
+        print("INCIDENT MEMORY TEST COMPLETE")
+        print("========================================")
+        print(f"\nHistorical memories used by the AI: {len(memories)}")
+
+    finally:
+        agent.close()
+===== TEST_GROQ.PY =====
+from app.llm import IncidentLLM
+
+
+def test_groq_analysis():
+    incident = """
+    The Payment API is returning HTTP 503 errors.
+    Payment requests are failing.
+    Database connection pool utilization has reached 100%.
+    """
+
+    memories = [
+        """
+        Payment API previously returned HTTP 503 errors because the
+        database connection pool was exhausted. Increasing the
+        connection pool from 50 to 100 successfully resolved the incident.
+        """
+    ]
+
+    llm = IncidentLLM()
+
+    print("\nSending incident to Groq...\n")
+
+    answer = llm.analyze(incident, memories)
+
+    print("========== AI INCIDENT ANALYSIS ==========\n")
+    print(answer)
+
+    assert answer is not None
+    assert len(answer.strip()) > 0
+===== TEST_HINDSIGHT.PY =====
+import os
+from dotenv import load_dotenv
+from hindsight_client import Hindsight
+
+
+def test_hindsight_memory():
+    load_dotenv()
+
+    client = Hindsight(
+        base_url=os.getenv("HINDSIGHT_BASE_URL"),
+        api_key=os.getenv("HINDSIGHT_API_KEY"),
+    )
+
+    bank_id = os.getenv("HINDSIGHT_BANK_ID")
+
+    print("\nTesting Hindsight...")
+
+    # Store a test memory
+    result = client.retain(
+        bank_id=bank_id,
+        content=(
+            "TEST INCIDENT: Payment API returned HTTP 503 because "
+            "the database connection pool was exhausted. "
+            "Increasing the connection pool from 50 to 100 "
+            "successfully resolved the incident."
+        ),
+        context="Incident response test",
+    )
+
+    print("Memory stored successfully!")
+    print(result)
+
+    # Recall the memory
+    results = client.recall(
+        bank_id=bank_id,
+        query="What happened when the Payment API returned HTTP 503?",
+    )
+
+    print("\nMemory recalled:")
+    print(results)
+
+    # Basic verification
+    assert results is not None
+    assert len(str(results)) > 0
