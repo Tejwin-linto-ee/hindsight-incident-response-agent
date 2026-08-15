@@ -902,3 +902,37 @@ class IncidentHistory:
         )
 
         return successful_fixes
+
+    # ========================================================
+    # GET ALL INCIDENTS
+    # ========================================================
+
+    def get_all_incidents(self):
+        """Returns all stored incidents, newest first."""
+        incidents = self._load()
+        return sorted(
+            incidents,
+            key=lambda x: x.get("created_at", ""),
+            reverse=True,
+        )
+
+    # ========================================================
+    # DELETE INCIDENT(S) — ADMIN OPERATION
+    # ========================================================
+
+    def delete_incident(self, incident_id: str) -> bool:
+        """Delete a single stored incident by its incident_id."""
+        incidents = self._load()
+        initial_len = len(incidents)
+        filtered = [inc for inc in incidents if inc.get("incident_id") != incident_id]
+        if len(filtered) < initial_len:
+            self._save(filtered)
+            return True
+        return False
+
+    def clear_all_incidents(self) -> int:
+        """Delete all stored incidents from history. Returns count of deleted records."""
+        incidents = self._load()
+        count = len(incidents)
+        self._save([])
+        return count

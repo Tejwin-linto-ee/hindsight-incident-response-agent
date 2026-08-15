@@ -1,12 +1,30 @@
+import sys
+from typing import Any
+
 from app.hindsight_memory import IncidentMemory
-from app.llm import IncidentLLM
 from app.incident_history import IncidentHistory
+from app.llm import IncidentLLM
+from app.memory_engine import MemoryEngine
+
+
+def _safe_print(text: str) -> None:
+    """Safely print text on Windows CP1252 terminal without crashing on emojis."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode("ascii", errors="backslashreplace").decode("ascii"))
 
 
 class IncidentResponseAgent:
+    """
+    Enterprise Incident Response Agent orchestrating:
+    - Real-time telemetry & ML failure forecasting
+    - Multi-angle Hindsight vector recall & semantic re-ranking
+    - Deep SRE reasoning via Kimi K2 (Moonshot AI) on Groq
+    - Continuous organizational learning loop from human technician reviews
+    """
 
     def __init__(self):
-
         self.memory = IncidentMemory()
         self.llm = IncidentLLM()
         self.history = IncidentHistory()
@@ -18,563 +36,202 @@ class IncidentResponseAgent:
     def investigate(
         self,
         incident: str,
-    ):
-
-        # ---------------------------------------------------------
-        # Preserve original input
-        # ---------------------------------------------------------
-
+        telemetry: dict[str, float] | None = None,
+        prediction: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         original_incident = incident
-
         incident = incident.strip()
 
         if not incident:
+            raise ValueError("Incident description cannot be empty.")
 
-            raise ValueError(
-                "Incident description cannot be empty."
+        _safe_print("\n[*] Investigating incident...")
+        _safe_print("=" * 60)
+        _safe_print(incident)
+
+        # ---------------------------------------------------------
+        # STEP 1: Evaluate Failure Prediction from Telemetry
+        # ---------------------------------------------------------
+        if telemetry and prediction is None:
+            try:
+                from app.failure_predictor import FailurePredictor
+                predictor = FailurePredictor()
+                prediction = predictor.predict(telemetry)
+                _safe_print(f"\n[+] Evaluated failure prediction: {prediction.get('predicted_failure_type', 'Unknown')} (Risk: {prediction.get('failure_risk', 0)}%)")
+            except Exception as pred_err:
+                _safe_print(f"\n[!] Could not evaluate failure prediction: {pred_err}")
+
+        # ---------------------------------------------------------
+        # STEP 2: Multi-Angle Semantic Memory Recall & Re-ranking
+        # ---------------------------------------------------------
+        try:
+            raw_memories = self.memory.find_similar_incidents(
+                incident,
+                telemetry=telemetry,
+                top_k=5,
             )
+        except Exception as memory_err:
+            _safe_print(f"\n[!] Hindsight memory recall warning: {memory_err}")
+            raw_memories = []
 
-        print(
-            "\n🔍 Investigating incident..."
+        if raw_memories is None:
+            raw_memories = []
+
+        # Process and rank memories using MemoryEngine
+        structured_memories = MemoryEngine.process_and_rank_memories(
+            raw_memories,
+            query=incident,
+            limit=5,
         )
 
-        print(
-            "=" * 60
-        )
+        # Extract plain text list for backward compatibility
+        text_memories = [m["raw_text"] for m in structured_memories]
 
-        print(
-            incident
-        )
+        _safe_print(f"\n[+] Retrieved & ranked {len(structured_memories)} historical memories from Hindsight.")
+        for i, sm in enumerate(structured_memories, 1):
+            _safe_print(f"   [{i}] Relevance: {sm['relevance_score']}% ({sm['tier']}) | Service: {sm['extracted_service']}")
 
         # ---------------------------------------------------------
-        # STEP 1
-        # Retrieve historical memory
+        # STEP 3: AI Incident Triage & Root Cause Analysis
         # ---------------------------------------------------------
-
-        results = self.memory.find_similar_incidents(
-            incident
-        )
-
-        if results is None:
-
-            results = []
-
-        print(
-            "\n🧠 Retrieved historical incidents:"
-        )
-
-        print(
-            f"Found {len(results)} relevant memories."
-        )
-
-        top_results = results[:5]
-
-        memories = []
-
-        for result in top_results:
-
-            if (
-                hasattr(result, "text")
-                and result.text
-            ):
-
-                memories.append(
-                    result.text
-                )
-
-        print(
-            f"Using {len(memories)} historical memories "
-            "for analysis."
-        )
-
-        # ---------------------------------------------------------
-        # STEP 2
-        # Groq / GPT-OSS analysis
-        # ---------------------------------------------------------
-
-        print(
-            "\n🤖 Analyzing incident with "
-            "historical context..."
-        )
-
+        _safe_print("\n[+] Analyzing incident with deep organizational context & ML telemetry...")
         analysis = self.llm.analyze(
             incident=incident,
-            memories=memories,
+            memories=structured_memories,
+            prediction=prediction,
         )
 
-        # ---------------------------------------------------------
-        # STEP 3
-        # Validate AI response
-        # ---------------------------------------------------------
-
-        if not isinstance(
-            analysis,
-            dict,
-        ):
-
-            raise ValueError(
-                "The AI returned an invalid "
-                "structured response."
-            )
-
-        # IMPORTANT:
-        #
-        # app/llm.py uses:
-        #
-        #     reasoning_summary
-        #
-        # NOT:
-        #
-        #     reasoning
-        #
-        # The previous agent.py was checking for
-        # "reasoning", which caused:
-        #
-        # ValueError:
-        # The AI response is missing required fields:
-        # ['reasoning']
+        if not isinstance(analysis, dict):
+            raise ValueError("The AI returned an invalid structured response.")
 
         required_fields = [
-
             "severity",
-
             "service",
-
             "category",
-
             "incident_summary",
-
             "root_cause",
-
             "root_cause_confidence",
-
             "historical_evidence",
-
             "recommended_actions",
-
             "short_term_actions",
-
             "long_term_prevention",
-
+            "reasoning",
             "reasoning_summary",
-
             "confidence",
-
             "uncertainty",
-
         ]
 
-        missing_fields = [
-
-            field
-
-            for field in required_fields
-
-            if field not in analysis
-
-        ]
-
-        if missing_fields:
-
-            raise ValueError(
-                "The AI response is missing "
-                f"required fields: {missing_fields}"
-            )
+        for field in required_fields:
+            if field not in analysis:
+                raise ValueError(f"AI response is missing required field: {field}")
 
         # ---------------------------------------------------------
-        # NORMALIZE REASONING FIELD
+        # STEP 4: Persist Investigation Locally
         # ---------------------------------------------------------
-        #
-        # The LLM officially returns reasoning_summary.
-        #
-        # Internally we also create "reasoning" so any older
-        # dashboard code will continue to work.
-
-        analysis["reasoning"] = (
-            analysis["reasoning_summary"]
-        )
-
-        # ---------------------------------------------------------
-        # Validate severity
-        # ---------------------------------------------------------
-
-        if analysis["severity"] not in {
-
-            "P1",
-
-            "P2",
-
-            "P3",
-
-            "P4",
-
-        }:
-
-            raise ValueError(
-                "AI returned an invalid severity level."
-            )
-
-        # ---------------------------------------------------------
-        # Validate root cause confidence
-        # ---------------------------------------------------------
-
-        if not isinstance(
-            analysis["root_cause_confidence"],
-            int,
-        ):
-
-            raise ValueError(
-                "root_cause_confidence "
-                "must be an integer."
-            )
-
-        if not 0 <= analysis[
-            "root_cause_confidence"
-        ] <= 100:
-
-            raise ValueError(
-                "root_cause_confidence "
-                "must be between 0 and 100."
-            )
-
-        # ---------------------------------------------------------
-        # Validate AI confidence
-        # ---------------------------------------------------------
-
-        if not isinstance(
-            analysis["confidence"],
-            int,
-        ):
-
-            raise ValueError(
-                "confidence must be an integer."
-            )
-
-        if not 0 <= analysis[
-            "confidence"
-        ] <= 100:
-
-            raise ValueError(
-                "confidence must be between 0 and 100."
-            )
-
-        # ---------------------------------------------------------
-        # Validate lists
-        # ---------------------------------------------------------
-
-        list_fields = [
-
-            "historical_evidence",
-
-            "recommended_actions",
-
-            "short_term_actions",
-
-            "long_term_prevention",
-
-        ]
-
-        for field in list_fields:
-
-            if not isinstance(
-                analysis[field],
-                list,
-            ):
-
-                raise ValueError(
-                    f"{field} must be a list."
-                )
-
-        # ---------------------------------------------------------
-        # STEP 4
-        # Persist investigation locally
-        # ---------------------------------------------------------
-
         record = self.history.create_incident(
-
             incident=original_incident,
-
             analysis=analysis,
-
-            historical_memories=memories,
-
+            historical_memories=text_memories,
+            telemetry=telemetry,
+            prediction=prediction,
         )
 
-        print(
-            "\n💾 Investigation saved."
-        )
-
-        print(
-            f"Incident ID: "
-            f"{record['incident_id']}"
-        )
+        _safe_print("\n[+] Investigation saved locally.")
+        _safe_print(f"Incident ID: {record['incident_id']}")
 
         # ---------------------------------------------------------
-        # STEP 5
-        # Terminal output
+        # STEP 5: Terminal Output & Summary
         # ---------------------------------------------------------
-
-        print(
-            "\n" + "=" * 60
-        )
-
-        print(
-            "🚨 INCIDENT RESPONSE ANALYSIS"
-        )
-
-        print(
-            "=" * 60
-        )
-
-        print(
-            f"\nSeverity: "
-            f"{analysis['severity']}"
-        )
-
-        print(
-            f"Service: "
-            f"{analysis['service']}"
-        )
-
-        print(
-            f"Category: "
-            f"{analysis['category']}"
-        )
-
-        print(
-            f"\nIncident Summary:\n"
-            f"{analysis['incident_summary']}"
-        )
-
-        print(
-            f"\nLikely Root Cause:\n"
-            f"{analysis['root_cause']}"
-        )
-
-        print(
-            f"\nRoot Cause Confidence: "
-            f"{analysis['root_cause_confidence']}%"
-        )
-
-        print(
-            "\nImmediate Actions:"
-        )
-
-        for i, action in enumerate(
-
-            analysis["recommended_actions"],
-
-            1,
-
-        ):
-
-            print(
-                f"{i}. {action}"
-            )
-
-        print(
-            "\nShort-Term Actions:"
-        )
-
-        for i, action in enumerate(
-
-            analysis["short_term_actions"],
-
-            1,
-
-        ):
-
-            print(
-                f"{i}. {action}"
-            )
-
-        print(
-            "\nLong-Term Prevention:"
-        )
-
-        for i, action in enumerate(
-
-            analysis["long_term_prevention"],
-
-            1,
-
-        ):
-
-            print(
-                f"{i}. {action}"
-            )
-
-        print(
-            f"\nAI Reasoning:\n"
-            f"{analysis['reasoning_summary']}"
-        )
-
-        print(
-            f"\nConfidence: "
-            f"{analysis['confidence']}%"
-        )
-
-        print(
-            f"\nUncertainty:\n"
-            f"{analysis['uncertainty']}"
-        )
-
-        print(
-            "\n" + "=" * 60
-        )
-
-        # ---------------------------------------------------------
-        # Return result
-        # ---------------------------------------------------------
+        _safe_print("\n" + "=" * 60)
+        _safe_print("INCIDENT RESPONSE ANALYSIS")
+        _safe_print("=" * 60)
+        _safe_print(f"\nSeverity: {analysis['severity']} | Service: {analysis['service']} | Category: {analysis['category']}")
+        _safe_print(f"Root Cause: {analysis['root_cause']} (Confidence: {analysis['root_cause_confidence']}%)")
+        _safe_print("\nImmediate Actions:")
+        for i, action in enumerate(analysis["recommended_actions"], 1):
+            _safe_print(f"  {i}. {action}")
+        _safe_print("=" * 60 + "\n")
 
         return {
-
             "incident": original_incident,
-
-            "incident_id": record[
-                "incident_id"
-            ],
-
-            "created_at": record[
-                "created_at"
-            ],
-
-            "historical_memories": memories,
-
+            "incident_id": record["incident_id"],
+            "created_at": record["created_at"],
+            "historical_memories": text_memories,
+            "structured_memories": structured_memories,
             "analysis": analysis,
-
+            "telemetry": telemetry,
+            "prediction": prediction,
         }
 
     # =============================================================
-    # RECORD ENGINEER / TECHNICIAN REVIEW
+    # RECORD ENGINEER / TECHNICIAN REVIEW & CONTINUOUS LEARNING
     # =============================================================
 
     def record_resolution(
-
         self,
-
         incident_id: str,
-
         helpful: bool,
-
         resolution: str,
-
-    ):
-
+    ) -> dict[str, Any]:
         resolution = resolution.strip()
-
         if not resolution:
+            raise ValueError("Resolution cannot be empty.")
 
-            raise ValueError(
-                "Resolution cannot be empty."
-            )
-
-        # ---------------------------------------------------------
-        # Save locally
-        # ---------------------------------------------------------
-
+        # Update local history record
         record = self.history.add_feedback(
-
             incident_id=incident_id,
-
             helpful=helpful,
-
             resolution=resolution,
-
         )
 
-        # ---------------------------------------------------------
-        # Build organizational memory
-        # ---------------------------------------------------------
-
+        # Build high-fidelity postmortem memory for Hindsight
         learning_memory = f"""
+============================================================
+VERIFIED PRODUCTION INCIDENT POSTMORTEM
+============================================================
+Incident ID: {incident_id}
+Service: {record.get('service', 'Unknown')}
+Severity: {record.get('severity', 'P3')}
+Category: {record.get('category', 'Unknown')}
 
-RESOLVED PRODUCTION INCIDENT
+Original Incident Symptoms:
+{record.get('incident', '')}
 
-Incident ID:
-{incident_id}
+AI Diagnostic Hypothesis:
+{record.get('root_cause', '')} (AI Confidence: {record.get('confidence', 0)}%)
 
-Original Incident:
-{record["incident"]}
+Human Technician Feedback:
+Diagnosis was {'CONFIRMED / HELPFUL' if helpful else 'REJECTED / UNHELPFUL'}
 
-Service:
-{record["service"]}
-
-Severity:
-{record["severity"]}
-
-Category:
-{record["category"]}
-
-AI Suggested Root Cause:
-{record["root_cause"]}
-
-AI Confidence:
-{record["confidence"]}%
-
-Human Feedback:
-{"Helpful" if helpful else "Not Helpful"}
-
-ACTUAL RESOLUTION:
+CONFIRMED HUMAN ENGINEER RESOLUTION & MITIGATION:
 {resolution}
 
-This incident was reviewed by a human engineer.
-
-The resolution represents confirmed organizational
-experience and should be considered as historical
-evidence for future similar incidents.
-
+Organizational Lesson Learned:
+This resolution represents verified institutional engineering experience.
+Future similar incidents should prioritize this remediation strategy.
 """
 
-        # ---------------------------------------------------------
-        # Store in Hindsight
-        # ---------------------------------------------------------
+        # Store in Hindsight knowledge bank
+        try:
+            self.memory.remember_incident(learning_memory)
+            _safe_print("\n[+] Hindsight organizational memory successfully reinforced.")
+        except Exception as e:
+            _safe_print(f"\n[!] Could not push learning to Hindsight: {e}")
 
-        self.memory.remember_incident(
-            learning_memory
-        )
-
-        # ---------------------------------------------------------
-        # Mark learned
-        # ---------------------------------------------------------
-
-        self.history.mark_learned(
-            incident_id
-        )
-
-        print(
-            "\n🧠 Organizational memory updated."
-        )
+        # Mark learned in local storage
+        self.history.mark_learned(incident_id)
 
         return {
-
             "incident_id": incident_id,
-
             "learned": True,
-
+            "resolution": resolution,
         }
 
-    # =============================================================
-    # HISTORY
-    # =============================================================
-
     def get_history(self):
-
         return self.history.get_all()
 
-    # =============================================================
-    # CLEANUP
-    # =============================================================
-
     def close(self):
-
         try:
-
             self.memory.close()
-
         except Exception as e:
-
-            print(
-                f"[MEMORY CLEANUP ERROR] "
-                f"{type(e).__name__}: {e}"
-            )
+            _safe_print(f"[MEMORY CLEANUP ERROR] {type(e).__name__}: {e}")

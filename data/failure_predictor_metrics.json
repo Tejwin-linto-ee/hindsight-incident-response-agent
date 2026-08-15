@@ -1,12 +1,13 @@
 {
-  "model": "Calibrated Multiclass Random Forest",
+  "model": "Calibrated Ensemble (RandomForest + ExtraTrees)",
   "model_type": "multiclass_failure_classifier",
-  "accuracy": 0.9979166666666667,
-  "precision": 0.9979348743944647,
-  "recall": 0.9979166666666667,
-  "f1": 0.9979216088947245,
-  "training_samples": 9600,
-  "testing_samples": 2400,
+  "accuracy": 1.0,
+  "precision": 1.0,
+  "recall": 1.0,
+  "f1": 1.0,
+  "training_samples": 12800,
+  "testing_samples": 3200,
+  "feature_count": 19,
   "failure_classes": [
     "api_availability_degradation",
     "cpu_saturation",
@@ -16,5 +17,5 @@
     "network_degradation",
     "none"
   ],
-  "classification_report": "                                precision    recall  f1-score   support\n\n  api_availability_degradation       1.00      1.00      1.00       192\n                cpu_saturation       1.00      1.00      1.00       232\ndatabase_connection_exhaustion       1.00      1.00      1.00       309\n               disk_exhaustion       0.98      0.99      0.99       144\n             memory_exhaustion       1.00      0.99      1.00       190\n           network_degradation       1.00      1.00      1.00       147\n                          none       1.00      1.00      1.00      1186\n\n                      accuracy                           1.00      2400\n                     macro avg       1.00      1.00      1.00      2400\n                  weighted avg       1.00      1.00      1.00      2400\n"
+  "classification_report": "                                precision    recall  f1-score   support\n\n  api_availability_degradation       1.00      1.00      1.00       317\n                cpu_saturation       1.00      1.00      1.00       358\ndatabase_connection_exhaustion       1.00      1.00      1.00       374\n               disk_exhaustion       1.00      1.00      1.00       245\n             memory_exhaustion       1.00      1.00      1.00       325\n           network_degradation       1.00      1.00      1.00       295\n                          none       1.00      1.00      1.00      1286\n\n                      accuracy                           1.00      3200\n                     macro avg       1.00      1.00      1.00      3200\n                  weighted avg       1.00      1.00      1.00      3200\n"
 }

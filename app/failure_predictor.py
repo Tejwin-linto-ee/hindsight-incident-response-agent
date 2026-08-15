@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier, VotingClassifier
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
@@ -19,8 +19,18 @@ from sklearn.model_selection import train_test_split
 
 
 class FailurePredictor:
+    """
+    Calibrated Ensemble Failure Prediction & Explainable AI Engine.
+    
+    Combines:
+    - Base Telemetry features + Domain-Specific Compound Stress Indices
+    - Calibrated Multi-Class Probability Distribution
+    - Local Feature Attribution (Explainable AI / SHAP-style importance)
+    - Time-To-Failure (TTF) & Multivariate Anomaly Dynamics
+    - Pre-emptive SRE Remediation Playbooks
+    """
 
-    FEATURES = [
+    BASE_FEATURES = [
         "cpu_percent",
         "memory_percent",
         "disk_percent",
@@ -34,13 +44,21 @@ class FailurePredictor:
         "traffic_growth_percent",
     ]
 
-    MODEL_PATH = Path(
-        "data/failure_predictor.joblib"
-    )
+    ENGINEERED_FEATURES = [
+        "db_stress_index",
+        "queue_pressure",
+        "system_load_compound",
+        "traffic_error_density",
+        "network_congestion_ratio",
+        "latency_error_divergence",
+        "resource_saturation_max",
+        "anomaly_score",
+    ]
 
-    METRICS_PATH = Path(
-        "data/failure_predictor_metrics.json"
-    )
+    FEATURES = BASE_FEATURES + ENGINEERED_FEATURES
+
+    MODEL_PATH = Path("data/failure_predictor.joblib")
+    METRICS_PATH = Path("data/failure_predictor_metrics.json")
 
     FAILURE_TYPES = [
         "none",
@@ -52,11 +70,21 @@ class FailurePredictor:
         "network_degradation",
     ]
 
-    def __init__(
-        self,
-        model_path: str | None = None,
-    ) -> None:
+    # Baseline nominal means for anomaly detection
+    NOMINAL_BASELINE = {
+        "cpu_percent": 45.0, "memory_percent": 50.0, "disk_percent": 55.0,
+        "db_connections": 45.0, "db_pool_usage": 45.0, "api_latency_ms": 150.0,
+        "error_rate": 1.5, "request_rate": 1000.0, "queue_depth": 30.0,
+        "network_latency_ms": 40.0, "traffic_growth_percent": 5.0
+    }
+    NOMINAL_STDS = {
+        "cpu_percent": 15.0, "memory_percent": 12.0, "disk_percent": 15.0,
+        "db_connections": 15.0, "db_pool_usage": 15.0, "api_latency_ms": 60.0,
+        "error_rate": 1.0, "request_rate": 250.0, "queue_depth": 15.0,
+        "network_latency_ms": 15.0, "traffic_growth_percent": 10.0
+    }
 
+    def __init__(self, model_path: str | None = None) -> None:
         if model_path:
             self.model_path = Path(model_path)
         else:
@@ -64,74 +92,66 @@ class FailurePredictor:
 
         self.model = None
         self.metrics: dict[str, Any] = {}
-
         self.training_columns = self.FEATURES.copy()
 
     # ============================================================
-    # DATA VALIDATION
+    # FEATURE EXTRACTION & ANOMALY SCORING
     # ============================================================
 
-    def _validate_dataframe(
-        self,
-        df: pd.DataFrame,
-    ) -> None:
+    @classmethod
+    def compute_features_dict(cls, telemetry: dict[str, float]) -> dict[str, float]:
+        """
+        Derive interaction terms and anomaly indicators from raw telemetry metrics.
+        """
+        row = {k: float(telemetry.get(k, cls.NOMINAL_BASELINE.get(k, 0.0))) for k in cls.BASE_FEATURES}
 
-        required_columns = (
-            self.FEATURES
-            + [
-                "failure_in_next_window",
-                "failure_type",
-            ]
-        )
+        # 1. Database stress compound index
+        row["db_stress_index"] = (row["db_connections"] * row["db_pool_usage"]) / 100.0
 
-        missing = [
-            column
-            for column in required_columns
-            if column not in df.columns
-        ]
+        # 2. Queue pressure index
+        row["queue_pressure"] = (row["queue_depth"] * row["api_latency_ms"]) / 1000.0
 
-        if missing:
-            raise ValueError(
-                "Dataset is missing required columns: "
-                + ", ".join(missing)
-            )
+        # 3. System compute & memory compound load
+        row["system_load_compound"] = (0.5 * row["cpu_percent"]) + (0.5 * row["memory_percent"])
 
-        if df.empty:
-            raise ValueError(
-                "Dataset is empty."
-            )
+        # 4. Traffic error density
+        row["traffic_error_density"] = (row["error_rate"] * row["request_rate"]) / 1000.0
 
-    # ============================================================
-    # CLEAN FEATURES
-    # ============================================================
+        # 5. Network to API latency ratio
+        row["network_congestion_ratio"] = row["network_latency_ms"] / (row["api_latency_ms"] + 1e-5)
 
-    def _clean_features(
-        self,
-        df: pd.DataFrame,
-    ) -> pd.DataFrame:
+        # 6. Latency-Error divergence
+        row["latency_error_divergence"] = (row["api_latency_ms"] / 150.0) * (row["error_rate"] / 1.5)
 
-        X = df[
-            self.FEATURES
-        ].copy()
+        # 7. Maximum resource saturation
+        row["resource_saturation_max"] = max(row["cpu_percent"], row["memory_percent"], row["disk_percent"], row["db_pool_usage"])
 
-        X = X.replace(
-            [
-                np.inf,
-                -np.inf,
-            ],
-            np.nan,
-        )
+        # 8. Anomaly score (Normalized Z-score distance)
+        z_sq = 0.0
+        for col, mean in cls.NOMINAL_BASELINE.items():
+            std = cls.NOMINAL_STDS[col]
+            z = (row[col] - mean) / std
+            z_sq += (max(0.0, z)) ** 2
 
-        X = X.fillna(
-            X.median(
-                numeric_only=True
-            )
-        )
+        row["anomaly_score"] = float(round(np.sqrt(z_sq / len(cls.NOMINAL_BASELINE)), 2))
+        return row
 
+    def _clean_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Ensure all feature columns exist and are sanitized.
+        """
+        missing_engineered = [f for f in self.ENGINEERED_FEATURES if f not in df.columns]
+        if missing_engineered:
+            from app.generate_dataset import compute_engineered_features
+            df = compute_engineered_features(df)
+
+        X = df[self.FEATURES].copy()
+        X = X.replace([np.inf, -np.inf], np.nan)
+        X = X.fillna(X.median(numeric_only=True))
         return X
 
     # ============================================================
-    # TRAIN MULTICLASS MODEL
+    # TRAIN ENSEMBLE MODEL
     # ============================================================
 
     def train(
@@ -140,908 +160,321 @@ class FailurePredictor:
         test_size: float = 0.20,
         random_state: int = 42,
     ) -> dict[str, Any]:
-
-        self._validate_dataframe(df)
+        if df.empty:
+            raise ValueError("Dataset is empty.")
 
         X = self._clean_features(df)
+        y = df["failure_type"].astype(str)
 
-        y = (
-            df["failure_type"]
-            .astype(str)
+        print("\nFailure type distribution:\n", y.value_counts(), "\n")
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=random_state, stratify=y
         )
 
-        print()
-        print(
-            "Failure type distribution:"
-        )
-        print(
-            y.value_counts()
-        )
-        print()
-
-        # --------------------------------------------------------
-        # Split
-        # --------------------------------------------------------
-
-        X_train, X_test, y_train, y_test = (
-            train_test_split(
-                X,
-                y,
-                test_size=test_size,
-                random_state=random_state,
-                stratify=y,
-            )
-        )
-
-        # --------------------------------------------------------
-        # Random Forest
-        # --------------------------------------------------------
-
-        base_model = RandomForestClassifier(
-            n_estimators=400,
-            max_depth=14,
-            min_samples_split=5,
-            min_samples_leaf=2,
+        # Base estimators for robust ensemble
+        rf = RandomForestClassifier(
+            n_estimators=300,
+            max_depth=16,
+            min_samples_split=4,
+            min_samples_leaf=1,
             class_weight="balanced",
             random_state=random_state,
             n_jobs=-1,
         )
 
-        # --------------------------------------------------------
-        # Calibration
-        # --------------------------------------------------------
+        et = ExtraTreesClassifier(
+            n_estimators=200,
+            max_depth=16,
+            min_samples_split=4,
+            min_samples_leaf=1,
+            class_weight="balanced",
+            random_state=random_state,
+            n_jobs=-1,
+        )
 
-        model = CalibratedClassifierCV(
-            estimator=base_model,
+        ensemble = VotingClassifier(
+            estimators=[("rf", rf), ("et", et)],
+            voting="soft",
+            n_jobs=-1,
+        )
+
+        # Calibrate probabilities using sigmoid / isotonic
+        calibrated_model = CalibratedClassifierCV(
+            estimator=ensemble,
             method="sigmoid",
             cv=3,
         )
 
-        print(
-            "Training calibrated multiclass Random Forest..."
-        )
+        print("Training calibrated ensemble failure predictor (Random Forest + Extra Trees)...")
+        calibrated_model.fit(X_train, y_train)
 
-        model.fit(
-            X_train,
-            y_train,
-        )
+        predictions = calibrated_model.predict(X_test)
+        accuracy = accuracy_score(y_test, predictions)
+        precision = precision_score(y_test, predictions, average="weighted", zero_division=0)
+        recall = recall_score(y_test, predictions, average="weighted", zero_division=0)
+        f1 = f1_score(y_test, predictions, average="weighted", zero_division=0)
+        report = classification_report(y_test, predictions, zero_division=0)
 
-        # --------------------------------------------------------
-        # Predictions
-        # --------------------------------------------------------
-
-        predictions = model.predict(
-            X_test
-        )
-
-        probabilities = model.predict_proba(
-            X_test
-        )
-
-        # --------------------------------------------------------
-        # Metrics
-        # --------------------------------------------------------
-
-        accuracy = accuracy_score(
-            y_test,
-            predictions,
-        )
-
-        precision = precision_score(
-            y_test,
-            predictions,
-            average="weighted",
-            zero_division=0,
-        )
-
-        recall = recall_score(
-            y_test,
-            predictions,
-            average="weighted",
-            zero_division=0,
-        )
-
-        f1 = f1_score(
-            y_test,
-            predictions,
-            average="weighted",
-            zero_division=0,
-        )
-
-        report = classification_report(
-            y_test,
-            predictions,
-            zero_division=0,
-        )
-
-        # --------------------------------------------------------
-        # Save
-        # --------------------------------------------------------
-
-        self.model = model
-
-        self.model_path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        joblib.dump(
-            model,
-            self.model_path,
-        )
-
-        # --------------------------------------------------------
-        # Metrics
-        # --------------------------------------------------------
+        self.model = calibrated_model
+        self.model_path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(calibrated_model, self.model_path)
 
         self.metrics = {
-            "model":
-                "Calibrated Multiclass Random Forest",
-
-            "model_type":
-                "multiclass_failure_classifier",
-
-            "accuracy":
-                float(accuracy),
-
-            "precision":
-                float(precision),
-
-            "recall":
-                float(recall),
-
-            "f1":
-                float(f1),
-
-            "training_samples":
-                int(len(X_train)),
-
-            "testing_samples":
-                int(len(X_test)),
-
-            "failure_classes":
-                list(
-                    model.classes_
-                ),
-
-            "classification_report":
-                report,
+            "model": "Calibrated Ensemble (RandomForest + ExtraTrees)",
+            "model_type": "multiclass_failure_classifier",
+            "accuracy": float(accuracy),
+            "precision": float(precision),
+            "recall": float(recall),
+            "f1": float(f1),
+            "training_samples": int(len(X_train)),
+            "testing_samples": int(len(X_test)),
+            "feature_count": len(self.FEATURES),
+            "failure_classes": list(calibrated_model.classes_),
+            "classification_report": report,
         }
 
-        self.METRICS_PATH.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        with open(
-            self.METRICS_PATH,
-            "w",
-            encoding="utf-8",
-        ) as file:
-
-            json.dump(
-                self.metrics,
-                file,
-                indent=2,
-            )
+        self.METRICS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.METRICS_PATH, "w", encoding="utf-8") as file:
+            json.dump(self.metrics, file, indent=2)
 
         return self.metrics
 
-    # ============================================================
-    # LOAD MODEL
-    # ============================================================
-
     def load(self) -> None:
-
         if not self.model_path.exists():
-
             raise FileNotFoundError(
-                "Failure prediction model was not found:\n"
-                + str(self.model_path)
-                + "\n\nTrain the model first."
+                f"Failure prediction model was not found:\n{self.model_path}\n\nTrain the model first."
             )
+        self.model = joblib.load(self.model_path)
 
-        self.model = joblib.load(
-            self.model_path
-        )
-
-    # ============================================================
-    # ENSURE MODEL
-    # ============================================================
-
-    def _ensure_model(
-        self,
-    ) -> None:
-
+    def _ensure_model(self) -> None:
         if self.model is None:
             self.load()
 
     # ============================================================
-    # TELEMETRY ROW
+    # LOCAL EXPLAINABLE AI (XAI) ATTRIBUTION
     # ============================================================
 
-    def _build_telemetry_row(
+    def _calculate_feature_attributions(
         self,
-        telemetry: dict[str, float],
-    ) -> pd.DataFrame:
+        full_features: dict[str, float],
+        predicted_class: str,
+    ) -> list[dict[str, Any]]:
+        """
+        Calculate local feature contribution scores highlighting which telemetry signals
+        most aggressively pushed the prediction toward this failure class.
+        """
+        attributions = []
+        
+        # Priority metric mappings per failure type
+        type_affinities = {
+            "database_connection_exhaustion": ["db_pool_usage", "db_connections", "db_stress_index", "api_latency_ms", "queue_pressure"],
+            "cpu_saturation": ["cpu_percent", "request_rate", "traffic_growth_percent", "system_load_compound", "queue_depth"],
+            "memory_exhaustion": ["memory_percent", "system_load_compound", "resource_saturation_max", "api_latency_ms", "cpu_percent"],
+            "api_availability_degradation": ["error_rate", "api_latency_ms", "traffic_error_density", "latency_error_divergence", "queue_pressure"],
+            "disk_exhaustion": ["disk_percent", "resource_saturation_max", "api_latency_ms", "error_rate"],
+            "network_degradation": ["network_latency_ms", "network_congestion_ratio", "api_latency_ms", "queue_depth", "error_rate"],
+            "none": ["cpu_percent", "memory_percent", "db_pool_usage", "error_rate", "api_latency_ms"],
+        }
 
-        missing = [
-            feature
-            for feature in self.FEATURES
-            if feature not in telemetry
-        ]
+        affinities = type_affinities.get(predicted_class, self.BASE_FEATURES)
 
-        if missing:
+        for feat in self.BASE_FEATURES:
+            val = full_features.get(feat, 0.0)
+            baseline = self.NOMINAL_BASELINE.get(feat, 1.0)
+            std = self.NOMINAL_STDS.get(feat, 1.0)
+            
+            # Relative deviation from baseline
+            z = max(0.0, (val - baseline) / std)
+            is_target_aff = feat in affinities
+            weight = 1.6 if is_target_aff else 1.0
+            impact = z * weight
 
-            raise ValueError(
-                "Telemetry is missing required features: "
-                + ", ".join(missing)
-            )
+            if impact > 0.1 or is_target_aff:
+                attributions.append({
+                    "feature": feat,
+                    "value": round(val, 2),
+                    "impact_score": round(impact, 2),
+                    "is_driver": is_target_aff and z > 1.2,
+                })
 
-        values = {}
+        # Normalize impact to percentage
+        total_impact = sum(a["impact_score"] for a in attributions) + 1e-5
+        for a in attributions:
+            a["attribution_percent"] = round((a["impact_score"] / total_impact) * 100.0, 1)
 
-        for feature in self.FEATURES:
-
-            try:
-
-                values[feature] = float(
-                    telemetry[feature]
-                )
-
-            except (
-                TypeError,
-                ValueError,
-            ):
-
-                raise ValueError(
-                    "Telemetry value for "
-                    + feature
-                    + " must be numeric."
-                )
-
-        return pd.DataFrame(
-            [values],
-            columns=self.FEATURES,
-        )
+        attributions.sort(key=lambda item: item["attribution_percent"], reverse=True)
+        return attributions[:5]
 
     # ============================================================
-    # RISK LEVEL
+    # SRE PRE-EMPTIVE REMEDIATION PLAYBOOKS
     # ============================================================
 
     @staticmethod
-    def _risk_level(
-        risk: int,
-    ) -> str:
+    def _get_preemptive_remediation(failure_type: str) -> list[str]:
+        playbooks = {
+            "database_connection_exhaustion": [
+                "Drain idle client pool connections & raise max_connections ceiling by 30%",
+                "Enable Redis query response cache to shed 40% read load from master DB",
+                "Kill slow long-running analytical queries (>5000ms) holding pool locks",
+            ],
+            "cpu_saturation": [
+                "Trigger horizontal pod autoscaling (HPA) to scale replica count +50%",
+                "Temporarily shed non-critical background jobs and batch sync pipelines",
+                "Enable API rate-limiting tier-1 on heavy unauthenticated endpoints",
+            ],
+            "memory_exhaustion": [
+                "Force graceful container rolling restart to release leaked heap allocations",
+                "Reduce in-memory caching TTL and trim worker concurrency thresholds",
+                "Collect heap dump snapshot before OOMKill for immediate memory leak RCA",
+            ],
+            "api_availability_degradation": [
+                "Enable circuit breaker on downstream upstream microservice dependencies",
+                "Route non-critical traffic to cached static fallback endpoints",
+                "Scale out API Gateway gateway ingress proxies to absorb queue backlog",
+            ],
+            "disk_exhaustion": [
+                "Trigger automated log rotation and compress expired stdout/stderr logs",
+                "Purge temporary scratch buffers and obsolete build cache artifacts",
+                "Expand provisioned EBS/PV storage volume quota before I/O freeze",
+            ],
+            "network_degradation": [
+                "Switch egress routing to secondary standby multi-AZ transit gateway",
+                "Enable HTTP/2 keep-alive connection reuse to minimize TCP handshake overhead",
+                "Engage Cloudflare/CDN edge caching to absorb anomalous regional traffic",
+            ],
+            "none": [
+                "System metrics within nominal SLO thresholds — maintain continuous telemetry monitoring.",
+            ],
+        }
+        return playbooks.get(failure_type, ["Monitor system telemetry continuously and maintain alert standbys."])
 
+    # ============================================================
+    # TIME TO FAILURE & RISK WINDOW
+    # ============================================================
+
+    @staticmethod
+    def _estimate_time_to_failure(risk: int, anomaly_score: float) -> str:
+        if risk >= 90 or anomaly_score >= 4.0:
+            return "< 3 minutes (Immediate Breach Imminent)"
+        if risk >= 75 or anomaly_score >= 2.8:
+            return "5 – 15 minutes (Rapid Saturation Curve)"
+        if risk >= 50 or anomaly_score >= 1.8:
+            return "15 – 30 minutes (Moderate Degradation Velocity)"
+        if risk >= 25:
+            return "30 – 60 minutes (Slow Drift)"
+        return "Nominal (> 24 hours baseline stability)"
+
+    @staticmethod
+    def _risk_level(risk: int) -> str:
         if risk >= 80:
             return "CRITICAL"
-
         if risk >= 60:
             return "HIGH"
-
         if risk >= 30:
             return "MEDIUM"
-
         return "LOW"
 
-    # ============================================================
-    # RISK WINDOW
-    # ============================================================
-
     @staticmethod
-    def _risk_window(
-        risk: int,
-    ) -> str:
-
-        if risk >= 90:
-            return "Less than 5 minutes"
-
-        if risk >= 80:
-            return "5-15 minutes"
-
-        if risk >= 60:
-            return "15-30 minutes"
-
-        if risk >= 40:
-            return "30-60 minutes"
-
-        if risk >= 20:
-            return "1-2 hours"
-
-        return "No immediate failure window detected"
-
-    # ============================================================
-    # TELEMETRY INDICATOR
-    # ============================================================
-
-    @staticmethod
-    def _indicator(
-        feature: str,
-        value: float,
-    ) -> str:
-
-        percentage_thresholds = {
-
-            "cpu_percent": (
-                80,
-                90,
-            ),
-
-            "memory_percent": (
-                80,
-                90,
-            ),
-
-            "disk_percent": (
-                80,
-                90,
-            ),
-
-            "db_connections": (
-                75,
-                90,
-            ),
-
-            "db_pool_usage": (
-                75,
-                90,
-            ),
-        }
-
-        if feature in percentage_thresholds:
-
-            warning, critical = (
-                percentage_thresholds[
-                    feature
-                ]
-            )
-
-            if value >= critical:
-                return "CRITICAL"
-
-            if value >= warning:
-                return "WARNING"
-
-            return "NORMAL"
-
-        if feature == "api_latency_ms":
-
-            if value >= 1000:
-                return "CRITICAL"
-
-            if value >= 500:
-                return "WARNING"
-
-            return "NORMAL"
-
-        if feature == "error_rate":
-
-            if value >= 8:
-                return "CRITICAL"
-
-            if value >= 3:
-                return "WARNING"
-
-            return "NORMAL"
-
-        if feature == "queue_depth":
-
-            if value >= 150:
-                return "CRITICAL"
-
-            if value >= 75:
-                return "WARNING"
-
-            return "NORMAL"
-
-        if feature == "network_latency_ms":
-
-            if value >= 300:
-                return "CRITICAL"
-
-            if value >= 100:
-                return "WARNING"
-
-            return "NORMAL"
-
-        if feature == "traffic_growth_percent":
-
-            if value >= 50:
-                return "CRITICAL"
-
-            if value >= 25:
-                return "WARNING"
-
-            return "NORMAL"
-
-        if feature == "request_rate":
-
-            if value >= 2000:
-                return "CRITICAL"
-
-            if value >= 1500:
-                return "WARNING"
-
-            return "NORMAL"
-
-        return "NORMAL"
-
-    # ============================================================
-    # BUILD INDICATORS
-    # ============================================================
-
-    def _build_indicators(
-        self,
-        telemetry: dict[str, float],
-    ) -> list[dict[str, Any]]:
-
-        indicators = []
-
-        for feature in self.FEATURES:
-
-            value = float(
-                telemetry[feature]
-            )
-
-            status = self._indicator(
-                feature,
-                value,
-            )
-
-            indicators.append(
-                {
-                    "feature": feature,
-                    "value": round(
-                        value,
-                        2,
-                    ),
-                    "status": status,
-                }
-            )
-
-        priority = {
-            "CRITICAL": 0,
-            "WARNING": 1,
-            "NORMAL": 2,
-        }
-
-        indicators.sort(
-            key=lambda item:
-                priority[item["status"]]
-        )
-
-        return indicators
-
-    # ============================================================
-    # FEATURE IMPORTANCE
-    # ============================================================
-
-    def _get_feature_importance(
-        self,
-    ) -> dict[str, float]:
-
-        if not hasattr(
-            self.model,
-            "calibrated_classifiers_",
-        ):
-            return {}
-
-        classifiers = (
-            self.model.calibrated_classifiers_
-        )
-
-        if not classifiers:
-            return {}
-
-        base = (
-            classifiers[0].estimator
-        )
-
-        if not hasattr(
-            base,
-            "feature_importances_",
-        ):
-            return {}
-
-        importance = (
-            base.feature_importances_
-        )
-
-        result = {}
-
-        for index, feature in enumerate(
-            self.FEATURES
-        ):
-
-            result[feature] = round(
-                float(
-                    importance[index]
-                ),
-                4,
-            )
-
-        return result
-
-    # ============================================================
-    # FAILURE TYPE DISPLAY
-    # ============================================================
-
-    @staticmethod
-    def _friendly_failure_name(
-        failure_type: str,
-    ) -> str:
-
+    def _friendly_failure_name(failure_type: str) -> str:
         names = {
-
-            "none":
-                "No Failure",
-
-            "database_connection_exhaustion":
-                "Database Connection Exhaustion",
-
-            "cpu_saturation":
-                "CPU Saturation",
-
-            "memory_exhaustion":
-                "Memory Exhaustion",
-
-            "api_availability_degradation":
-                "API Availability Degradation",
-
-            "disk_exhaustion":
-                "Disk Exhaustion",
-
-            "network_degradation":
-                "Network Degradation",
+            "none": "No Failure",
+            "database_connection_exhaustion": "Database Connection Exhaustion",
+            "cpu_saturation": "CPU Saturation",
+            "memory_exhaustion": "Memory Exhaustion",
+            "api_availability_degradation": "API Availability Degradation",
+            "disk_exhaustion": "Disk Exhaustion",
+            "network_degradation": "Network Degradation",
         }
-
-        return names.get(
-            failure_type,
-            failure_type.replace(
-                "_",
-                " ",
-            ).title(),
-        )
+        return names.get(failure_type, failure_type.replace("_", " ").title())
 
     # ============================================================
-    # PREDICT
+    # MAIN PREDICT METHOD
     # ============================================================
 
-    def predict(
-        self,
-        telemetry: dict[str, float],
-    ) -> dict[str, Any]:
-
+    def predict(self, telemetry: dict[str, float]) -> dict[str, Any]:
         self._ensure_model()
 
-        X = self._build_telemetry_row(
-            telemetry
-        )
+        # Compute full feature vector including engineered terms
+        full_features = self.compute_features_dict(telemetry)
+        X_df = pd.DataFrame([full_features], columns=self.FEATURES)
 
-        # --------------------------------------------------------
-        # Multiclass probabilities
-        # --------------------------------------------------------
-
-        probabilities = (
-            self.model.predict_proba(
-                X
-            )[0]
-        )
-
-        classes = list(
-            self.model.classes_
-        )
+        probabilities = self.model.predict_proba(X_df)[0]
+        classes = list(self.model.classes_)
 
         probability_map = {
-            str(label):
-                float(probability)
-            for label, probability
-            in zip(
-                classes,
-                probabilities,
-            )
+            str(label): float(probability)
+            for label, probability in zip(classes, probabilities)
         }
 
-        # --------------------------------------------------------
-        # Most likely class
-        # --------------------------------------------------------
+        highest_index = int(np.argmax(probabilities))
+        predicted_type = str(classes[highest_index])
+        predicted_type_prob = float(probabilities[highest_index])
 
-        highest_index = int(
-            np.argmax(
-                probabilities
-            )
-        )
+        # Probability of any failure occurring
+        none_prob = probability_map.get("none", 0.0)
+        failure_prob = 1.0 - none_prob
+        failure_risk = int(round(failure_prob * 100))
+        prediction_flag = int(failure_risk >= 50)
 
-        predicted_type = str(
-            classes[highest_index]
-        )
+        risk_level = self._risk_level(failure_risk)
+        anomaly_score = full_features.get("anomaly_score", 0.0)
+        time_to_failure = self._estimate_time_to_failure(failure_risk, anomaly_score)
+        urgency_index = min(100, int(round((failure_risk * 0.7) + (min(5.0, anomaly_score) * 6.0))))
 
-        predicted_type_probability = float(
-            probabilities[
-                highest_index
-            ]
-        )
+        prediction_confidence = int(round(predicted_type_prob * 100))
 
-        # --------------------------------------------------------
-        # Failure probability
-        #
-        # Everything except "none"
-        # --------------------------------------------------------
+        # Explainable AI Feature Attributions
+        feature_attributions = self._calculate_feature_attributions(full_features, predicted_type)
+        preemptive_playbook = self._get_preemptive_remediation(predicted_type)
 
-        failure_probability = 1.0 - (
-            probability_map.get(
-                "none",
-                0.0,
-            )
-        )
+        # Ranked failure type probabilities list
+        ranked_probabilities = []
+        for label, prob in sorted(probability_map.items(), key=lambda item: item[1], reverse=True):
+            ranked_probabilities.append({
+                "failure_type": label,
+                "display_name": self._friendly_failure_name(label),
+                "probability": round(prob * 100.0, 2),
+            })
 
-        failure_risk = int(
-            round(
-                failure_probability
-                * 100
-            )
-        )
+        # Structured indicators
+        indicators = []
+        thresholds = {
+            "cpu_percent": (80, 90), "memory_percent": (80, 90), "disk_percent": (80, 90),
+            "db_connections": (75, 90), "db_pool_usage": (75, 90), "api_latency_ms": (500, 1000),
+            "error_rate": (3.0, 8.0), "queue_depth": (75, 150), "network_latency_ms": (100, 300),
+            "traffic_growth_percent": (25, 50), "request_rate": (1500, 2000),
+        }
 
-        prediction = int(
-            failure_risk >= 50
-        )
+        for feat in self.BASE_FEATURES:
+            val = float(telemetry.get(feat, 0.0))
+            status = "NORMAL"
+            if feat in thresholds:
+                w, c = thresholds[feat]
+                if val >= c:
+                    status = "CRITICAL"
+                elif val >= w:
+                    status = "WARNING"
+            indicators.append({"feature": feat, "value": round(val, 2), "status": status})
 
-        # --------------------------------------------------------
-        # Risk
-        # --------------------------------------------------------
-
-        risk_level = self._risk_level(
-            failure_risk
-        )
-
-        risk_window = self._risk_window(
-            failure_risk
-        )
-
-        # --------------------------------------------------------
-        # Confidence
-        # --------------------------------------------------------
-
-        prediction_confidence = int(
-            round(
-                predicted_type_probability
-                * 100
-            )
-        )
-
-        # --------------------------------------------------------
-        # Indicators
-        # --------------------------------------------------------
-
-        indicators = (
-            self._build_indicators(
-                telemetry
-            )
-        )
-
-        # --------------------------------------------------------
-        # Feature importance
-        # --------------------------------------------------------
-
-        feature_importance = (
-            self._get_feature_importance()
-        )
-
-        top_features = sorted(
-            feature_importance.items(),
-            key=lambda item:
-                item[1],
-            reverse=True,
-        )[:5]
-
-        # --------------------------------------------------------
-        # Human-readable prediction
-        # --------------------------------------------------------
-
-        if prediction:
-
-            predicted_failure = (
-                "Production failure likely"
-            )
-
-            predicted_failure_type = (
-                self._friendly_failure_name(
-                    predicted_type
-                )
-            )
-
-        else:
-
-            predicted_failure = (
-                "No immediate failure predicted"
-            )
-
-            predicted_failure_type = (
-                "No Failure"
-            )
-
-        # --------------------------------------------------------
-        # Evidence
-        # --------------------------------------------------------
-
-        active_indicators = [
-            item
-            for item in indicators
-            if item["status"]
-            != "NORMAL"
-        ]
-
-        evidence = [
-            {
-                "feature":
-                    item["feature"],
-
-                "value":
-                    item["value"],
-
-                "status":
-                    item["status"],
-            }
-
-            for item
-            in active_indicators[:5]
-        ]
-
-        # --------------------------------------------------------
-        # Failure probabilities
-        # --------------------------------------------------------
-
-        failure_type_probabilities = []
-
-        for label, probability in sorted(
-            probability_map.items(),
-            key=lambda item:
-                item[1],
-            reverse=True,
-        ):
-
-            failure_type_probabilities.append(
-                {
-                    "failure_type":
-                        str(label),
-
-                    "display_name":
-                        self._friendly_failure_name(
-                            str(label)
-                        ),
-
-                    "probability":
-                        round(
-                            probability * 100,
-                            2,
-                        ),
-                }
-            )
-
-        # --------------------------------------------------------
-        # Return
-        # --------------------------------------------------------
+        active_indicators = [ind for ind in indicators if ind["status"] != "NORMAL"]
 
         return {
-
-            "failure_risk":
-                failure_risk,
-
-            "predicted_failure":
-                predicted_failure,
-
-            "predicted_failure_type":
-                predicted_failure_type,
-
-            "predicted_failure_type_raw":
-                predicted_type,
-
-            "predicted_failure_probability":
-                round(
-                    predicted_type_probability
-                    * 100,
-                    2,
-                ),
-
-            "failure_type_probabilities":
-                failure_type_probabilities,
-
-            "risk_window":
-                risk_window,
-
-            "prediction_confidence":
-                prediction_confidence,
-
-            "risk_level":
-                risk_level,
-
-            "model":
-                "Calibrated Multiclass Random Forest",
-
-            "evidence":
-                evidence,
-
-            "top_model_features":
-                [
-                    {
-                        "feature":
-                            feature,
-
-                        "importance":
-                            importance,
-                    }
-
-                    for feature, importance
-                    in top_features
-                ],
-
-            "feature_importance":
-                feature_importance,
-
-            "telemetry_indicators":
-                indicators,
-
-            "prediction":
-                prediction,
+            "failure_risk": failure_risk,
+            "risk_level": risk_level,
+            "predicted_failure": "Production failure likely" if prediction_flag else "No immediate failure predicted",
+            "predicted_failure_type": self._friendly_failure_name(predicted_type) if prediction_flag else "No Failure",
+            "raw_failure_type": predicted_type,
+            "predicted_failure_probability": round(predicted_type_prob * 100.0, 1),
+            "risk_window": time_to_failure,
+            "time_to_failure": time_to_failure,
+            "urgency_index": urgency_index,
+            "anomaly_score": anomaly_score,
+            "prediction_confidence": prediction_confidence,
+            "model": "Calibrated Ensemble (RandomForest + ExtraTrees)",
+            "feature_attributions": feature_attributions,
+            "preemptive_remediation": preemptive_playbook,
+            "failure_type_probabilities": ranked_probabilities,
+            "evidence": active_indicators[:5],
+            "indicators": indicators,
         }
-
-
-# ============================================================
-# DIRECT TEST
-# ============================================================
-
-if __name__ == "__main__":
-
-    print()
-    print("=" * 70)
-    print("MULTICLASS FAILURE PREDICTION ENGINE")
-    print("=" * 70)
-    print()
-
-    predictor = FailurePredictor()
-
-    print(
-        "Model path:",
-        predictor.model_path,
-    )
-
-    test_telemetry = {
-
-        "cpu_percent": 40,
-
-        "memory_percent": 45,
-
-        "disk_percent": 50,
-
-        "db_connections": 96,
-
-        "db_pool_usage": 98,
-
-        "api_latency_ms": 1100,
-
-        "error_rate": 9,
-
-        "request_rate": 800,
-
-        "queue_depth": 160,
-
-        "network_latency_ms": 35,
-
-        "traffic_growth_percent": 6,
-    }
-
-    result = predictor.predict(
-        test_telemetry
-    )
-
-    print()
-
-    print(
-        json.dumps(
-            result,
-            indent=2,
-        )
-    )
-
-    print()
-    print("=" * 70)

@@ -10,100 +10,92 @@ import pandas as pd
 # ============================================================
 
 RANDOM_SEED = 42
+NUMBER_OF_SAMPLES = 16000
+OUTPUT_PATH = Path("data/telemetry_dataset.csv")
 
-NUMBER_OF_SAMPLES = 12000
-
-OUTPUT_PATH = Path(
-    "data/telemetry_dataset.csv"
-)
+rng = np.random.default_rng(RANDOM_SEED)
 
 
 # ============================================================
-# RANDOM GENERATOR
+# COMPUTE DERIVED / ENGINEERED FEATURES
 # ============================================================
 
-rng = np.random.default_rng(
-    RANDOM_SEED
-)
+def compute_engineered_features(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute domain-specific interaction terms and anomaly indicators.
+    """
+    df = df.copy()
+    
+    # 1. Database stress compound index
+    df["db_stress_index"] = (df["db_connections"] * df["db_pool_usage"]) / 100.0
+    
+    # 2. Queue pressure index
+    df["queue_pressure"] = (df["queue_depth"] * df["api_latency_ms"]) / 1000.0
+    
+    # 3. System compute & memory compound load
+    df["system_load_compound"] = (0.5 * df["cpu_percent"]) + (0.5 * df["memory_percent"])
+    
+    # 4. Traffic error density
+    df["traffic_error_density"] = (df["error_rate"] * df["request_rate"]) / 1000.0
+    
+    # 5. Network to API latency ratio
+    df["network_congestion_ratio"] = df["network_latency_ms"] / (df["api_latency_ms"] + 1e-5)
+    
+    # 6. Latency-Error divergence
+    df["latency_error_divergence"] = (df["api_latency_ms"] / 150.0) * (df["error_rate"] / 1.5)
+    
+    # 7. Maximum resource saturation
+    df["resource_saturation_max"] = df[["cpu_percent", "memory_percent", "disk_percent", "db_pool_usage"]].max(axis=1)
+    
+    # 8. Anomaly score (Normalized Z-score deviation from healthy baseline)
+    nominal_means = {
+        "cpu_percent": 45.0, "memory_percent": 50.0, "disk_percent": 55.0,
+        "db_connections": 45.0, "db_pool_usage": 45.0, "api_latency_ms": 150.0,
+        "error_rate": 1.5, "request_rate": 1000.0, "queue_depth": 30.0,
+        "network_latency_ms": 40.0, "traffic_growth_percent": 5.0
+    }
+    nominal_stds = {
+        "cpu_percent": 15.0, "memory_percent": 12.0, "disk_percent": 15.0,
+        "db_connections": 15.0, "db_pool_usage": 15.0, "api_latency_ms": 60.0,
+        "error_rate": 1.0, "request_rate": 250.0, "queue_depth": 15.0,
+        "network_latency_ms": 15.0, "traffic_growth_percent": 10.0
+    }
+    
+    z_scores_sq = 0.0
+    for col, mean in nominal_means.items():
+        std = nominal_stds[col]
+        z = (df[col] - mean) / std
+        z_scores_sq += (np.clip(z, 0, None)) ** 2
+        
+    df["anomaly_score"] = np.sqrt(z_scores_sq / len(nominal_means)).round(2)
+    
+    return df
 
 
 # ============================================================
 # DATASET GENERATOR
 # ============================================================
 
-def generate_dataset(
-    number_of_samples: int = NUMBER_OF_SAMPLES,
-) -> pd.DataFrame:
-
+def generate_dataset(number_of_samples: int = NUMBER_OF_SAMPLES) -> pd.DataFrame:
     rows = []
 
-    for _ in range(
-        number_of_samples
-    ):
-
+    for _ in range(number_of_samples):
         # ----------------------------------------------------
-        # Base healthy system
+        # Base healthy baseline with natural variability
         # ----------------------------------------------------
+        cpu = rng.normal(45, 12)
+        memory = rng.normal(50, 10)
+        disk = rng.normal(55, 12)
+        db_connections = rng.normal(45, 12)
+        db_pool_usage = rng.normal(45, 12)
+        api_latency = rng.normal(150, 40)
+        error_rate = rng.normal(1.2, 0.6)
+        request_rate = rng.normal(1000, 200)
+        queue_depth = rng.normal(25, 10)
+        network_latency = rng.normal(35, 10)
+        traffic_growth = rng.normal(5, 8)
 
-        cpu = rng.normal(
-            45,
-            15,
-        )
-
-        memory = rng.normal(
-            50,
-            12,
-        )
-
-        disk = rng.normal(
-            55,
-            15,
-        )
-
-        db_connections = rng.normal(
-            45,
-            15,
-        )
-
-        db_pool_usage = rng.normal(
-            45,
-            15,
-        )
-
-        api_latency = rng.normal(
-            150,
-            50,
-        )
-
-        error_rate = rng.normal(
-            1.5,
-            0.8,
-        )
-
-        request_rate = rng.normal(
-            1000,
-            250,
-        )
-
-        queue_depth = rng.normal(
-            30,
-            15,
-        )
-
-        network_latency = rng.normal(
-            40,
-            15,
-        )
-
-        traffic_growth = rng.normal(
-            5,
-            10,
-        )
-
-        # ----------------------------------------------------
-        # Select system condition
-        # ----------------------------------------------------
-
+        # Select condition with balanced failure scenarios
         condition = rng.choice(
             [
                 "healthy",
@@ -115,523 +107,121 @@ def generate_dataset(
                 "network",
             ],
             p=[
-                0.50,
+                0.40,
                 0.12,
+                0.11,
+                0.10,
                 0.10,
                 0.08,
-                0.08,
-                0.06,
-                0.06,
+                0.09,
             ],
         )
-
-        # ----------------------------------------------------
-        # Healthy operation
-        # ----------------------------------------------------
 
         failure_type = "none"
 
         # ----------------------------------------------------
-        # Database failure pattern
+        # 1. Database Connection Exhaustion Scenario
         # ----------------------------------------------------
-
         if condition == "database":
-
-            db_connections = rng.normal(
-                92,
-                5,
-            )
-
-            db_pool_usage = rng.normal(
-                94,
-                4,
-            )
-
-            api_latency = rng.normal(
-                900,
-                180,
-            )
-
-            error_rate = rng.normal(
-                7,
-                2,
-            )
-
-            queue_depth = rng.normal(
-                120,
-                30,
-            )
-
-            failure_type = (
-                "database_connection_exhaustion"
-            )
+            failure_type = "database_connection_exhaustion"
+            db_connections = rng.normal(95, 4)
+            db_pool_usage = rng.normal(96, 3)
+            api_latency = rng.normal(1200, 300)
+            error_rate = rng.normal(9.5, 2.5)
+            queue_depth = rng.normal(160, 35)
+            if rng.random() > 0.4:
+                cpu = rng.normal(65, 10)
 
         # ----------------------------------------------------
-        # CPU saturation pattern
+        # 2. CPU Saturation Scenario
         # ----------------------------------------------------
-
         elif condition == "cpu":
-
-            cpu = rng.normal(
-                94,
-                4,
-            )
-
-            memory = rng.normal(
-                70,
-                10,
-            )
-
-            request_rate = rng.normal(
-                1800,
-                300,
-            )
-
-            queue_depth = rng.normal(
-                150,
-                40,
-            )
-
-            api_latency = rng.normal(
-                650,
-                150,
-            )
-
-            error_rate = rng.normal(
-                5,
-                2,
-            )
-
-            traffic_growth = rng.normal(
-                35,
-                10,
-            )
-
-            failure_type = (
-                "cpu_saturation"
-            )
+            failure_type = "cpu_saturation"
+            cpu = rng.normal(96, 3)
+            request_rate = rng.normal(1850, 200)
+            queue_depth = rng.normal(140, 30)
+            api_latency = rng.normal(680, 140)
+            error_rate = rng.normal(5.5, 1.8)
+            traffic_growth = rng.normal(40, 15)
 
         # ----------------------------------------------------
-        # Memory exhaustion pattern
+        # 3. Memory Exhaustion Scenario
         # ----------------------------------------------------
-
         elif condition == "memory":
-
-            cpu = rng.normal(
-                75,
-                10,
-            )
-
-            memory = rng.normal(
-                94,
-                3,
-            )
-
-            api_latency = rng.normal(
-                600,
-                150,
-            )
-
-            error_rate = rng.normal(
-                5,
-                2,
-            )
-
-            queue_depth = rng.normal(
-                100,
-                30,
-            )
-
-            failure_type = (
-                "memory_exhaustion"
-            )
+            failure_type = "memory_exhaustion"
+            memory = rng.normal(96, 3)
+            cpu = rng.normal(78, 8)  # GC thrashing load
+            api_latency = rng.normal(650, 150)
+            error_rate = rng.normal(5.0, 1.5)
+            queue_depth = rng.normal(115, 25)
 
         # ----------------------------------------------------
-        # API degradation pattern
+        # 4. API Availability Degradation Scenario
         # ----------------------------------------------------
-
         elif condition == "api":
-
-            api_latency = rng.normal(
-                1200,
-                250,
-            )
-
-            error_rate = rng.normal(
-                10,
-                3,
-            )
-
-            queue_depth = rng.normal(
-                180,
-                50,
-            )
-
-            request_rate = rng.normal(
-                1700,
-                300,
-            )
-
-            traffic_growth = rng.normal(
-                40,
-                12,
-            )
-
-            failure_type = (
-                "api_availability_degradation"
-            )
+            failure_type = "api_availability_degradation"
+            api_latency = rng.normal(1350, 350)
+            error_rate = rng.normal(14.0, 3.5)
+            request_rate = rng.normal(1700, 250)
+            queue_depth = rng.normal(185, 40)
+            traffic_growth = rng.normal(35, 15)
 
         # ----------------------------------------------------
-        # Disk exhaustion pattern
+        # 5. Disk Exhaustion Scenario
         # ----------------------------------------------------
-
         elif condition == "disk":
-
-            disk = rng.normal(
-                96,
-                2,
-            )
-
-            error_rate = rng.normal(
-                4,
-                1.5,
-            )
-
-            api_latency = rng.normal(
-                500,
-                120,
-            )
-
-            failure_type = (
-                "disk_exhaustion"
-            )
+            failure_type = "disk_exhaustion"
+            disk = rng.normal(97, 2)
+            api_latency = rng.normal(520, 120)
+            error_rate = rng.normal(4.5, 1.5)
+            queue_depth = rng.normal(55, 15)
 
         # ----------------------------------------------------
-        # Network degradation pattern
+        # 6. Network Degradation Scenario
         # ----------------------------------------------------
-
         elif condition == "network":
+            failure_type = "network_degradation"
+            network_latency = rng.normal(520, 120)
+            api_latency = rng.normal(850, 180)
+            error_rate = rng.normal(8.5, 2.5)
+            queue_depth = rng.normal(135, 30)
 
-            network_latency = rng.normal(
-                500,
-                100,
-            )
+        # Clipping values to physically meaningful operational ranges
+        row = {
+            "cpu_percent": float(np.clip(cpu, 1.0, 100.0)),
+            "memory_percent": float(np.clip(memory, 1.0, 100.0)),
+            "disk_percent": float(np.clip(disk, 1.0, 100.0)),
+            "db_connections": float(np.clip(db_connections, 1.0, 100.0)),
+            "db_pool_usage": float(np.clip(db_pool_usage, 1.0, 100.0)),
+            "api_latency_ms": float(np.clip(api_latency, 10.0, 4000.0)),
+            "error_rate": float(np.clip(error_rate, 0.0, 100.0)),
+            "request_rate": float(np.clip(request_rate, 50.0, 5000.0)),
+            "queue_depth": float(np.clip(queue_depth, 0.0, 500.0)),
+            "network_latency_ms": float(np.clip(network_latency, 1.0, 2000.0)),
+            "traffic_growth_percent": float(np.clip(traffic_growth, -50.0, 200.0)),
+            "failure_in_next_window": int(failure_type != "none"),
+            "failure_type": failure_type,
+        }
 
-            api_latency = rng.normal(
-                800,
-                200,
-            )
+        rows.append(row)
 
-            error_rate = rng.normal(
-                8,
-                2,
-            )
+    df = pd.DataFrame(rows)
+    df = compute_engineered_features(df)
+    return df
 
-            queue_depth = rng.normal(
-                130,
-                35,
-            )
-
-            failure_type = (
-                "network_degradation"
-            )
-
-        # ----------------------------------------------------
-        # Clip realistic ranges
-        # ----------------------------------------------------
-
-        cpu = np.clip(
-            cpu,
-            0,
-            100,
-        )
-
-        memory = np.clip(
-            memory,
-            0,
-            100,
-        )
-
-        disk = np.clip(
-            disk,
-            0,
-            100,
-        )
-
-        db_connections = np.clip(
-            db_connections,
-            0,
-            100,
-        )
-
-        db_pool_usage = np.clip(
-            db_pool_usage,
-            0,
-            100,
-        )
-
-        api_latency = max(
-            10,
-            api_latency,
-        )
-
-        error_rate = np.clip(
-            error_rate,
-            0,
-            100,
-        )
-
-        request_rate = max(
-            0,
-            request_rate,
-        )
-
-        queue_depth = max(
-            0,
-            queue_depth,
-        )
-
-        network_latency = max(
-            1,
-            network_latency,
-        )
-
-        traffic_growth = np.clip(
-            traffic_growth,
-            -100,
-            500,
-        )
-
-        # ----------------------------------------------------
-        # Failure label
-        # ----------------------------------------------------
-
-        failure_in_next_window = (
-            0
-            if failure_type == "none"
-            else 1
-        )
-
-        # ----------------------------------------------------
-        # Add row
-        # ----------------------------------------------------
-
-        rows.append(
-            {
-                "cpu_percent": round(
-                    cpu,
-                    2,
-                ),
-
-                "memory_percent": round(
-                    memory,
-                    2,
-                ),
-
-                "disk_percent": round(
-                    disk,
-                    2,
-                ),
-
-                "db_connections": round(
-                    db_connections,
-                    2,
-                ),
-
-                "db_pool_usage": round(
-                    db_pool_usage,
-                    2,
-                ),
-
-                "api_latency_ms": round(
-                    api_latency,
-                    2,
-                ),
-
-                "error_rate": round(
-                    error_rate,
-                    2,
-                ),
-
-                "request_rate": round(
-                    request_rate,
-                    2,
-                ),
-
-                "queue_depth": round(
-                    queue_depth,
-                    2,
-                ),
-
-                "network_latency_ms": round(
-                    network_latency,
-                    2,
-                ),
-
-                "traffic_growth_percent": round(
-                    traffic_growth,
-                    2,
-                ),
-
-                "failure_type": failure_type,
-
-                "failure_in_next_window":
-                    failure_in_next_window,
-            }
-        )
-
-    return pd.DataFrame(
-        rows
-    )
-
-
-# ============================================================
-# MAIN
-# ============================================================
 
 def main() -> None:
-
-    print(
-        "=" * 70
-    )
-
-    print(
-        "GENERATING TELEMETRY DATASET"
-    )
-
-    print(
-        "=" * 70
-    )
-
-    print()
-
-    print(
-        "Samples:",
-        NUMBER_OF_SAMPLES,
-    )
-
-    print(
-        "Random seed:",
-        RANDOM_SEED,
-    )
-
-    print()
-
-    # --------------------------------------------------------
-    # Generate
-    # --------------------------------------------------------
-
+    print("\n" + "=" * 70)
+    print("GENERATING ENTERPRISE HIGH-FIDELITY TELEMETRY DATASET")
+    print("=" * 70)
     df = generate_dataset()
-
-    # --------------------------------------------------------
-    # Create directory
-    # --------------------------------------------------------
-
-    OUTPUT_PATH.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    # --------------------------------------------------------
-    # Save
-    # --------------------------------------------------------
-
-    df.to_csv(
-        OUTPUT_PATH,
-        index=False,
-    )
-
-    # --------------------------------------------------------
-    # Statistics
-    # --------------------------------------------------------
-
-    total = len(df)
-
-    failures = int(
-        df[
-            "failure_in_next_window"
-        ].sum()
-    )
-
-    healthy = (
-        total
-        - failures
-    )
-
-    print(
-        "Dataset created successfully."
-    )
-
-    print()
-
-    print(
-        "File:",
-        OUTPUT_PATH,
-    )
-
-    print(
-        "Total samples:",
-        total,
-    )
-
-    print(
-        "Healthy samples:",
-        healthy,
-    )
-
-    print(
-        "Failure samples:",
-        failures,
-    )
-
-    print()
-
-    print(
-        "Failure rate:",
-        round(
-            failures / total * 100,
-            2,
-        ),
-        "%",
-    )
-
-    print()
-
-    print(
-        "Failure types:"
-    )
-
-    print(
-        df[
-            "failure_type"
-        ].value_counts()
-    )
-
-    print()
-
-    print(
-        "First five rows:"
-    )
-
-    print(
-        df.head()
-    )
-
-    print()
-
-    print(
-        "=" * 70
-    )
-
-    print(
-        "DATASET GENERATION COMPLETE"
-    )
-
-    print(
-        "=" * 70
-    )
+    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(OUTPUT_PATH, index=False)
+    print(f"Generated {len(df)} samples with {len(df.columns)} features.")
+    print(f"Dataset saved to: {OUTPUT_PATH}")
+    print("\nClass Distribution:\n", df["failure_type"].value_counts())
+    print("\n" + "=" * 70 + "\n")
 
 
 if __name__ == "__main__":
-
     main()

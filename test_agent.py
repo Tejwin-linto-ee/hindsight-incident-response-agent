@@ -169,3 +169,7 @@ def test_incident_response():
     finally:
 
         agent.close()
+
+
+if __name__ == "__main__":
+    test_incident_response()
