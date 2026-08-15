@@ -1,4 +1,4 @@
-"""
+﻿"""
 Interactive SRE Copilot Chat Session Manager.
 
 Manages conversational state, message history, and contextual grounding
@@ -11,8 +11,10 @@ from app.llm import IncidentLLM
 
 class SRECopilot:
     """
-    Manages multi-turn incident copilot sessions.
+    Manages multi-turn incident copilot sessions with bounded history.
     """
+
+    MAX_HISTORY: int = 20
 
     def __init__(self, llm: IncidentLLM | None = None) -> None:
         self.llm = llm or IncidentLLM()
@@ -30,6 +32,10 @@ class SRECopilot:
             return "Please provide a valid question or command."
 
         self.history.append({"role": "user", "content": user_message.strip()})
+
+        # Keep context bounded to prevent unbounded token growth
+        if len(self.history) > self.MAX_HISTORY:
+            self.history = self.history[-self.MAX_HISTORY:]
 
         try:
             reply = self.llm.chat_reply(

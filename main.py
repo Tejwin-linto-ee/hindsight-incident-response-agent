@@ -669,6 +669,7 @@ for key, default in [
     ("sre_copilot_messages", []),
     ("webhook_url", ""),
     ("chaos_active", None),
+    ("chaos_show_tab", False),
     ("incident_input_text", "The Payment API is returning HTTP 503 errors. Database connections are timing out and the database connection pool is nearly full. API latency and error rate are increasing, and the request queue is growing."),
 ]:
     if key not in st.session_state:
@@ -1040,14 +1041,20 @@ Review pending access requests, confirm or revoke operator authorizations, assig
                         col_up, col_del = st.columns(2)
                         with col_up:
                             if st.button("💾 Save", key=f"save_{u_name}", use_container_width=True):
-                                SecurityManager.update_user_role(u_name, new_r, grant_adm, current_user.get("username", "admin"))
-                                st.success("Updated!")
+                                ok, rmsg = SecurityManager.update_user_role(u_name, new_r, grant_adm, current_user.get("username", "admin"))
+                                if ok:
+                                    st.success(f"✅ {rmsg}")
+                                else:
+                                    st.error(f"❌ {rmsg}")
                                 time.sleep(0.5)
                                 st.rerun()
                         with col_del:
                             if st.button("🗑️ Remove", key=f"del_{u_name}", use_container_width=True):
-                                SecurityManager.delete_user(u_name, current_user.get("username", "admin"))
-                                st.warning(f"Deleted user '{u_name}'")
+                                ok, rmsg = SecurityManager.delete_user(u_name, current_user.get("username", "admin"))
+                                if ok:
+                                    st.warning(f"🗑️ {rmsg}")
+                                else:
+                                    st.error(f"❌ {rmsg}")
                                 time.sleep(0.5)
                                 st.rerun()
 
@@ -1194,6 +1201,8 @@ if st.session_state.active_view == "simulation":
 
     from app.chaos_engine import ChaosEngine
 
+    # Preserve which tab is active across reruns
+    _chaos_tab_default = 1 if st.session_state.get("chaos_show_tab", False) else 0
     tab_std_sim, tab_chaos_sim = st.tabs(["📡 Standard Telemetry Stream", "💥 Chaos Fault Injection Experiments"])
 
     with tab_std_sim:
@@ -1263,18 +1272,27 @@ if st.session_state.active_view == "simulation":
             if st.button("💥  Inject Chaos Fault & Compute Anomaly", type="primary", use_container_width=True, key="btn_inject_chaos"):
                 if current_chaos:
                     st.session_state.simulation_running = False
+                    try:
+                        st.session_state.telemetry_manager.stop()
+                    except Exception:
+                        pass
                     st.session_state.chaos_active = current_chaos.id
+                    st.session_state.chaos_show_tab = True
                     # Inject peak failure step
                     peak_metrics = current_chaos.steps[-1]
                     st.session_state.telemetry = dict(peak_metrics)
+                    st.session_state.prediction = None  # Reset so ML re-runs cleanly
                     st.session_state.incident_input_text = (
                         f"The {current_chaos.target_service} is experiencing critical degradation. "
                         f"Observed Symptoms: {', '.join(current_chaos.symptoms)}. "
                         f"{current_chaos.description}"
                     )
                     if predictor_available and predictor:
-                        st.session_state.prediction = predictor.predict(st.session_state.telemetry)
-                    
+                        try:
+                            st.session_state.prediction = predictor.predict(st.session_state.telemetry)
+                        except Exception as _pred_err:
+                            st.warning(f"ML prediction failed: {_pred_err}")
+
                     # Security audit log
                     SecurityManager.log_event(
                         event_type="CHAOS_EXPERIMENT_INJECTED",
@@ -1282,8 +1300,21 @@ if st.session_state.active_view == "simulation":
                         details=f"Injected chaos: {current_chaos.name} on {current_chaos.target_service}",
                         status="SUCCESS"
                     )
-                    st.success(f"⚡ Injected fault: {current_chaos.name} — Metrics pushed to ML engine!")
-                    st.rerun()
+                    st.success(f"⚡ Injected fault: {current_chaos.name} — Peak failure metrics active. Scroll down to view ML Predictive Intelligence.")
+
+            if st.button("🔄  Reset Simulation to Baseline", use_container_width=True, key="btn_reset_chaos"):
+                st.session_state.chaos_active = None
+                st.session_state.simulation_running = False
+                st.session_state.simulation_mode = "healthy"
+                try:
+                    st.session_state.telemetry_manager.stop()
+                    st.session_state.telemetry = st.session_state.telemetry_manager.start("healthy")
+                    st.session_state.prediction = None
+                    if predictor_available and predictor:
+                        st.session_state.prediction = predictor.predict(st.session_state.telemetry)
+                except Exception:
+                    pass
+                st.success("✅ Simulation reset to Healthy Baseline.")
 
     if st.session_state.simulation_running:
         try:
@@ -1292,6 +1323,44 @@ if st.session_state.active_view == "simulation":
                 st.session_state.telemetry = sample
         except Exception as e:
             st.error(f"Telemetry stream error: {e}")
+
+    # ─── CHAOS ACTIVE STATUS BANNER ───
+    if st.session_state.chaos_active:
+        _active_chaos = ChaosEngine.get_scenario(st.session_state.chaos_active)
+        if _active_chaos:
+            st.markdown(f"""
+            <div style="background:linear-gradient(135deg,rgba(239,68,68,0.12) 0%,rgba(249,115,22,0.08) 100%);
+                        border:1px solid rgba(239,68,68,0.35); border-radius:12px; padding:0.9rem 1.2rem; margin-bottom:1rem;
+                        display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem;">
+                <div>
+                    <div style="font-size:0.65rem; font-weight:800; color:#F87171; text-transform:uppercase;
+                                letter-spacing:0.1em; margin-bottom:0.2rem;">💥 Chaos Experiment Active</div>
+                    <div style="font-size:1rem; font-weight:700; color:#FFFFFF;">{_active_chaos.name}</div>
+                    <div style="font-size:0.78rem; color:#94A3B8; margin-top:0.15rem;">
+                        Target: <strong style="color:#FCA5A5;">{_active_chaos.target_service}</strong>
+                        &nbsp;·&nbsp; Type: <strong style="color:#FCA5A5;">{_active_chaos.expected_failure_type}</strong>
+                    </div>
+                </div>
+                <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+                    {''.join(f'<span style="background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.3); color:#FCA5A5; font-size:0.7rem; padding:0.2rem 0.55rem; border-radius:20px; font-weight:600;">{sym}</span>' for sym in _active_chaos.symptoms[:2])}
+                </div>
+            </div>
+            <div style="display:flex; gap:0.5rem; margin-bottom:0.75rem; flex-wrap:wrap;">""", unsafe_allow_html=True)
+
+            # Phase timeline pills
+            phase_labels = ["⬤ Baseline", "⬤ Moderate Drift", "⬤ Peak Failure"]
+            phase_colors = ["#34D399", "#FBBF24", "#F87171"]
+            phase_html = ""
+            for _pi, (_plbl, _pcol) in enumerate(zip(phase_labels, phase_colors)):
+                _is_active = _pi == 2  # Peak failure is always the injected step
+                _bg = f"rgba({int(_pcol[1:3],16)},{int(_pcol[3:5],16)},{int(_pcol[5:7],16)},0.25)" if _is_active else "rgba(255,255,255,0.04)"
+                _border = _pcol if _is_active else "rgba(255,255,255,0.1)"
+                phase_html += (
+                    f'<div style="background:{_bg}; border:1px solid {_border}; border-radius:8px; '
+                    f'padding:0.4rem 0.85rem; font-size:0.72rem; font-weight:{"800" if _is_active else "500"}; '
+                    f'color:{_pcol if _is_active else "#64748B"};">{_plbl}</div>'
+                )
+            st.markdown(phase_html + "</div>", unsafe_allow_html=True)
 
     telemetry = st.session_state.telemetry
 
@@ -1345,10 +1414,17 @@ if st.session_state.active_view == "simulation":
         """, unsafe_allow_html=True)
 
     # ─── ML PREDICTIVE INTELLIGENCE ───
-    if telemetry and predictor_available and predictor:
+    # Recompute prediction for live telemetry stream; chaos inject already sets it above
+    if telemetry and predictor_available and predictor and st.session_state.simulation_running:
         try:
             pred = predictor.predict(telemetry)
             st.session_state.prediction = pred
+        except Exception:
+            st.session_state.prediction = None
+    elif telemetry and predictor_available and predictor and not st.session_state.prediction:
+        # Compute once on first load or when prediction was cleared
+        try:
+            st.session_state.prediction = predictor.predict(telemetry)
         except Exception:
             st.session_state.prediction = None
 
@@ -1376,7 +1452,8 @@ if st.session_state.active_view == "simulation":
         }
         l_text, l_color = level_cfg.get(risk_level, ("#94A3B8","#64748B"))
 
-        st.markdown('<div class="eyebrow">AI Forecasting Engine</div>', unsafe_allow_html=True)
+        model_ver = prediction.get("model_version", "v2.6.0-enterprise")
+        st.markdown(f'<div class="eyebrow">AI Forecasting Engine &nbsp;·&nbsp; <span style="color:#5EEAD4; font-weight:700;">{model_ver}</span></div>', unsafe_allow_html=True)
         st.markdown('<div class="section-title" style="font-size:1.3rem; margin-bottom:1rem;">🔮 Predictive Failure Intelligence</div>', unsafe_allow_html=True)
 
         st.markdown(f"""
@@ -1482,6 +1559,13 @@ if st.session_state.active_view == "simulation":
     st.write("")
     if st.button("🤖  Launch AI Reasoning Investigation (First Page)", type="primary", use_container_width=True, key="btn_go_reasoning"):
         st.session_state.active_view = "reasoning"
+        st.rerun()
+
+    # ─── LIVE STREAM AUTO-REFRESH ───
+    # Must be inside the simulation view block — st.stop() below prevents the
+    # global auto-refresh at the bottom of the file from ever being reached.
+    if st.session_state.simulation_running:
+        time.sleep(1)
         st.rerun()
 
     st.stop()  # Stop execution here for simulation view
@@ -1596,12 +1680,14 @@ if st.button("🧠  Investigate Current System State", type="primary", use_conta
 
         except Exception as e:
             msg = str(e)
-            if "OPENROUTER_API_KEY" in msg or "openrouter" in msg.lower() or "GROQ_API_KEY" in msg or "groq" in msg.lower():
-                st.error("⚠️ **LLM API Unavailable** — Verify `OPENROUTER_API_KEY` in `.env` — get a free key at https://openrouter.ai/keys")
+            if "OPENROUTER_API_KEY" in msg or "openrouter" in msg.lower() or "GROQ_API_KEY" in msg or "groq" in msg.lower() or "Neither OPENROUTER" in msg:
+                st.error("⚠️ **LLM API Unavailable** — Please configure `OPENROUTER_API_KEY` or `GROQ_API_KEY` in your `.env` file.")
             elif "HINDSIGHT" in msg or "hindsight" in msg.lower():
-                st.error("⚠️ **Hindsight Memory Unavailable** — Verify `HINDSIGHT_API_KEY`, `HINDSIGHT_BASE_URL`, `HINDSIGHT_BANK_ID` in `.env`.")
+                st.warning("⚠️ **Hindsight Vector Memory Warning** — Hindsight memory bank unreachable. Proceeding with local AI reasoning.")
+            elif "invalid structured response" in msg or "JSON" in msg or "missing required field" in msg:
+                st.error("⚠️ **Investigation Error** — Incident investigation could not be completed because the AI response structure was invalid. Please retry.")
             else:
-                st.error(f"⚠️ **Investigation failed:** {msg}")
+                st.error(f"⚠️ **Investigation Notice:** {msg}")
 
 
 # ============================================================
@@ -1631,11 +1717,12 @@ if result:
                 <span style="background:rgba(30,41,59,0.9); color:#94A3B8; border:1px solid rgba(255,255,255,0.07); font-size:0.8rem; padding:0.25rem 0.7rem; border-radius:7px;">🏷️ {category}</span>
             </div>
             <div style="display:flex; align-items:center; gap:0.6rem;">
+                <span style="background:rgba(59,130,246,0.15); color:#60A5FA; border:1px solid rgba(59,130,246,0.3); font-weight:700; font-size:0.75rem; padding:0.2rem 0.65rem; border-radius:6px; letter-spacing:0.04em;">LIFECYCLE: MITIGATION_RECOMMENDED</span>
                 <span style="font-size:0.78rem; color:#64748B;">AI Confidence</span>
                 <span style="background:rgba(16,185,129,0.12); color:#34D399; border:1px solid rgba(16,185,129,0.25); font-weight:800; font-size:0.82rem; padding:0.2rem 0.65rem; border-radius:6px;">{ai_conf}%</span>
             </div>
         </div>
-        <div style="font-size:0.68rem; color:#334155; font-family:'JetBrains Mono',monospace;">Tracking ID: {incident_id}</div>
+        <div style="font-size:0.68rem; color:#64748B; font-family:'JetBrains Mono',monospace;">Tracking ID: {incident_id}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1823,6 +1910,10 @@ if result:
         <div style="margin-bottom:1rem;">
             <div style="font-size:0.75rem; font-weight:800; color:#5EEAD4; text-transform:uppercase; letter-spacing:0.08em;">Auto-Generated Production Runbook</div>
             <div style="font-size:1.15rem; font-weight:700; color:#FFFFFF;">Target Service: <code>{runbook.get('service', 'app')}</code> ({runbook.get('severity', 'P2')})</div>
+            <div style="font-size:0.82rem; color:#94A3B8; margin-top:0.3rem;">{runbook.get('situation_summary', '')}</div>
+        </div>
+        <div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.3); border-radius:8px; padding:0.65rem 0.9rem; margin-bottom:1rem; font-size:0.8rem; color:#FCA5A5;">
+            ⚠️ <b>OPERATOR REVIEW REQUIRED:</b> The platform never executes remediation commands automatically. Inspect parameters and obtain peer authorization before running.
         </div>
         """, unsafe_allow_html=True)
 
@@ -1860,6 +1951,7 @@ if result:
             analysis=analysis,
             incident_text=inc_raw_text,
             telemetry=current_telemetry,
+            prediction=result.get("prediction") or st.session_state.get("prediction"),
             incident_id=incident_id,
             author=f"{current_author} ({user_info.get('role', 'SRE')})",
         )
@@ -1867,6 +1959,7 @@ if result:
             analysis=analysis,
             incident_text=inc_raw_text,
             telemetry=current_telemetry,
+            prediction=result.get("prediction") or st.session_state.get("prediction"),
             incident_id=incident_id,
         )
 
@@ -2051,12 +2144,4 @@ st.markdown("""
     <div>Human review required before applying any production mitigation.</div>
 </div>
 """, unsafe_allow_html=True)
-
-
-# ============================================================
-# AUTO-REFRESH LOOP
-# ============================================================
-
-if st.session_state.simulation_running:
-    time.sleep(1)
-    st.rerun()
+

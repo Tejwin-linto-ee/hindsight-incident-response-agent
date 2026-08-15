@@ -9,9 +9,12 @@ class MemoryEngine:
     Provides:
     - Contextual query expansion (extracting service, symptoms, error classes)
     - Hybrid keyword + semantic relevance scoring (0-100%)
-    - Memory structuring, tiering (High / Moderate / Contextual)
+    - Memory structuring, tiering (High / Moderate / Low Context)
     - Actionable resolution extraction from past incident postmortems
     """
+
+    HIGH_RELEVANCE_THRESHOLD = 80.0
+    MODERATE_RELEVANCE_THRESHOLD = 60.0
 
     SERVICE_PATTERNS = [
         r"(payment[-_ ]?api|payments?)",
@@ -119,16 +122,25 @@ class MemoryEngine:
         """
         Extract structured metadata from unstructured/semi-structured memory text.
         """
-        relevance_score = cls.calculate_relevance_score(memory_text, query_text)
+        base_relevance = cls.calculate_relevance_score(memory_text, query_text)
 
-        if relevance_score >= 70:
-            tier = "High Relevance"
+        # Detect technician confirmation
+        is_technician_confirmed = bool(
+            re.search(r"(?:CONFIRMED HUMAN|Technician Feedback:\s*CONFIRMED|VERIFIED PRODUCTION INCIDENT|Human Technician Feedback:\s*Diagnosis was CONFIRMED)", memory_text, re.IGNORECASE)
+        )
+
+        # Re-ranking score: add minor boost for technician-confirmed resolution without overriding pure relevance
+        final_score = base_relevance + (5.0 if is_technician_confirmed else 0.0)
+        final_score = min(100.0, round(final_score, 1))
+
+        if final_score >= cls.HIGH_RELEVANCE_THRESHOLD:
+            tier = "HIGH RELEVANCE"
             tier_badge = "HIGH"
-        elif relevance_score >= 40:
-            tier = "Moderate Relevance"
+        elif final_score >= cls.MODERATE_RELEVANCE_THRESHOLD:
+            tier = "MODERATE"
             tier_badge = "MODERATE"
         else:
-            tier = "Contextual Background"
+            tier = "LOW CONTEXT"
             tier_badge = "LOW"
 
         # Attempt to extract service, root cause, and resolution
@@ -140,22 +152,23 @@ class MemoryEngine:
         if service_match:
             service = service_match.group(1).strip()
 
-        rc_match = re.search(r"(?:Root Cause|AI Suggested Root Cause):\s*([^\n\r]+)", memory_text, re.IGNORECASE)
+        rc_match = re.search(r"(?:Root Cause|AI Suggested Root Cause|AI Diagnostic Hypothesis):\s*([^\n\r]+)", memory_text, re.IGNORECASE)
         if rc_match:
             root_cause = rc_match.group(1).strip()
 
-        res_match = re.search(r"(?:Resolution|ACTUAL RESOLUTION):\s*([^\n\r]+(?:\n[^\n\r]+){0,2})", memory_text, re.IGNORECASE)
+        res_match = re.search(r"(?:Resolution|CONFIRMED HUMAN ENGINEER RESOLUTION & MITIGATION|ACTUAL RESOLUTION):\s*([^\n\r]+(?:\n[^\n\r]+){0,2})", memory_text, re.IGNORECASE)
         if res_match:
             resolution = res_match.group(1).strip()
 
         return {
             "raw_text": memory_text,
-            "relevance_score": relevance_score,
+            "relevance_score": final_score,
             "tier": tier,
             "tier_badge": tier_badge,
             "extracted_service": service,
             "extracted_root_cause": root_cause,
             "extracted_resolution": resolution,
+            "technician_confirmed": is_technician_confirmed,
         }
 
     @classmethod
@@ -190,5 +203,5 @@ class MemoryEngine:
             structured.append(cls.structure_memory(text, query))
 
         # Sort descending by relevance score
-        structured.sort(key=lambda m: m["relevance_score"], reverse=True)
+        structured.sort(key=lambda m: (m["relevance_score"], 1 if m["technician_confirmed"] else 0), reverse=True)
         return structured[:limit]

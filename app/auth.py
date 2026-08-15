@@ -27,7 +27,8 @@ class SecurityManager:
         os.makedirs(DATA_DIR, exist_ok=True)
         if not os.path.exists(USERS_FILE):
             default_salt = bcrypt.gensalt()
-            default_hash = bcrypt.hashpw("IncidentCommander2026!".encode('utf-8'), default_salt).decode('utf-8')
+            admin_password = os.getenv("ADMIN_PASSWORD", "IncidentCommander2026!")
+            default_hash = bcrypt.hashpw(admin_password.encode('utf-8'), default_salt).decode('utf-8')
             users = {
                 "admin": {
                     "username": "admin",
@@ -212,25 +213,52 @@ class SecurityManager:
         return True
 
     @classmethod
-    def delete_user(cls, username: str, admin_actor: str) -> bool:
-        users = cls._load_users()
-        u_key = username.strip().lower()
-        if u_key not in users or u_key == "admin":
-            return False  # Prevent deleting root admin
-        del users[u_key]
-        cls._save_users(users)
-        cls.log_event("USER_DELETED", admin_actor, f"Deleted user account '{u_key}'", "SUCCESS")
-        return True
+    def _count_active_admins(cls, users: Dict[str, Any]) -> int:
+        count = 0
+        for u in users.values():
+            if u.get("status") == "APPROVED" and u.get("is_admin", False):
+                count += 1
+        return count
 
     @classmethod
-    def update_user_role(cls, username: str, new_role: str, is_admin: bool, admin_actor: str) -> bool:
+    def delete_user(cls, username: str, admin_actor: str) -> tuple[bool, str]:
         users = cls._load_users()
         u_key = username.strip().lower()
         if u_key not in users:
-            return False
+            return False, "User does not exist."
+        if u_key == "admin":
+            return False, "Cannot delete root admin account."
+
+        if users[u_key].get("is_admin", False) and users[u_key].get("status") == "APPROVED":
+            if cls._count_active_admins(users) <= 1:
+                return False, "At least one active administrator must remain."
+
+        del users[u_key]
+        cls._save_users(users)
+        cls.log_event("USER_DELETED", admin_actor, f"Deleted user account '{u_key}'", "SUCCESS")
+        return True, "User account deleted."
+
+    @classmethod
+    def update_user_role(cls, username: str, new_role: str, is_admin: bool, admin_actor: str) -> tuple[bool, str]:
+        users = cls._load_users()
+        u_key = username.strip().lower()
+        if u_key not in users:
+            return False, "User does not exist."
+
+        current_is_admin = users[u_key].get("is_admin", False)
+        current_status = users[u_key].get("status")
+
+        # Protecting last admin demotion
+        if current_is_admin and not is_admin and current_status == "APPROVED":
+            if cls._count_active_admins(users) <= 1:
+                return False, "At least one active administrator must remain."
+
         users[u_key]["role"] = new_role
         if u_key != "admin":  # Root admin remains admin always
             users[u_key]["is_admin"] = is_admin
+        else:
+            users[u_key]["is_admin"] = True
+
         cls._save_users(users)
-        cls.log_event("USER_ROLE_UPDATED", admin_actor, f"Updated '{u_key}' role to '{new_role}' (admin={is_admin})", "SUCCESS")
-        return True
+        cls.log_event("USER_ROLE_UPDATED", admin_actor, f"Updated '{u_key}' role to '{new_role}' (admin={users[u_key]['is_admin']})", "SUCCESS")
+        return True, "User role updated successfully."

@@ -1,5 +1,12 @@
 [
   {
+    "timestamp": "2026-08-15T16:26:42Z",
+    "event_type": "AUTH_LOGIN",
+    "actor": "admin",
+    "status": "SUCCESS",
+    "details": "Successful login (Lead SRE / Incident Commander)"
+  },
+  {
     "timestamp": "2026-08-15T11:45:05Z",
     "event_type": "INCIDENTS_PURGED_ALL",
     "actor": "admin",

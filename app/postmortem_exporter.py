@@ -1,4 +1,4 @@
-"""
+﻿"""
 Executive Incident Postmortem & Root Cause Analysis (RCA) Exporter.
 
 Generates standardized SRE postmortem reports ready for Jira, Confluence,
@@ -13,7 +13,7 @@ from typing import Any
 class PostmortemExporter:
     """
     Renders structured incident investigation results into a comprehensive
-    SRE Postmortem / RCA document.
+    SRE Postmortem / RCA document with full ML telemetry and technician feedback.
     """
 
     @classmethod
@@ -22,6 +22,8 @@ class PostmortemExporter:
         analysis: dict[str, Any],
         incident_text: str,
         telemetry: dict[str, float] | None = None,
+        prediction: dict[str, Any] | None = None,
+        technician_feedback: dict[str, Any] | None = None,
         incident_id: str | None = None,
         author: str = "SRE Incident Commander",
     ) -> str:
@@ -49,6 +51,43 @@ class PostmortemExporter:
             for k, v in telemetry.items():
                 telemetry_rows.append(f"| `{k}` | `{v}` |")
         telemetry_table = "\n".join(telemetry_rows) if telemetry_rows else "| Metric | Value |\n|---|---|\n| N/A | Telemetry Not Captured |"
+
+        # ML Predictive Intelligence Table
+        ml_section = ""
+        if prediction:
+            pred_type = prediction.get("predicted_failure_type", "N/A")
+            pred_risk = prediction.get("failure_risk", 0)
+            pred_conf = prediction.get("prediction_confidence", 0)
+            pred_window = prediction.get("risk_window", "N/A")
+            pred_urgency = prediction.get("urgency_index", 0)
+            pred_model = prediction.get("model", "Ensemble Classifier")
+            ml_section = f"""
+---
+
+## 5. Machine Learning Predictive Intelligence
+| ML Dimension | Observation / Prediction |
+| :--- | :--- |
+| **Model Engine** | `{pred_model}` |
+| **Predicted Failure Archetype** | **{pred_type}** |
+| **Failure Risk Score** | `{pred_risk}%` |
+| **Prediction Confidence** | `{pred_conf}%` |
+| **Estimated Time-To-Failure (TTF)** | `{pred_window}` |
+| **Composite Urgency Index** | `{pred_urgency} / 100` |
+"""
+
+        # Technician Review & Resolution
+        tech_section = ""
+        if technician_feedback:
+            status = "CONFIRMED" if technician_feedback.get("helpful") else "REJECTED / CORRECTED"
+            res = technician_feedback.get("resolution", "No resolution text logged.")
+            tech_section = f"""
+---
+
+## 7. Technician Review & Verified Resolution
+- **Human Verification Status:** `{status}`
+- **Confirmed Operator Resolution:**
+> {res}
+"""
 
         # Actions List
         rec_list = "\n".join([f"- [ ] {act}" for act in immediate_actions]) or "- None"
@@ -104,15 +143,15 @@ class PostmortemExporter:
 | Metric | Value |
 | :--- | :--- |
 {telemetry_table}
-
+{ml_section}
 ---
 
-## 5. Historical Precedents & Organizational Memory (Hindsight)
+## 6. Historical Precedents & Organizational Memory (Hindsight)
 {history_str}
-
+{tech_section}
 ---
 
-## 6. Action Items & Remediation Matrix
+## 8. Action Items & Remediation Matrix
 
 ### 🚨 Immediate Containment (Blast Radius Mitigation)
 {rec_list}
@@ -125,12 +164,12 @@ class PostmortemExporter:
 
 ---
 
-## 7. Five Whys Root Cause Decomposition
+## 9. Five Whys Root Cause Decomposition
 1. **Why did the outage occur?** `{summary}`
 2. **Why did this system fail?** `Critical metrics exceeded operating thresholds in {category}.`
 3. **Why did metrics exceed threshold?** `{root_cause}`
 4. **Why was this not mitigated automatically?** `Deficiencies in circuit breaker policies or automated autoscaling limits.`
-5. **Why was this vulnerability present?** `Requires implementation of permanent hardening items listed in Section 6.`
+5. **Why was this vulnerability present?** `Requires implementation of permanent hardening items listed in Section 8.`
 
 ---
 *Generated automatically by Hindsight Incident Intelligence Platform at {date_str}*
@@ -143,17 +182,21 @@ class PostmortemExporter:
         analysis: dict[str, Any],
         incident_text: str,
         telemetry: dict[str, float] | None = None,
+        prediction: dict[str, Any] | None = None,
+        technician_feedback: dict[str, Any] | None = None,
         incident_id: str | None = None,
     ) -> str:
         data = {
             "postmortem_metadata": {
                 "incident_id": incident_id or f"INC-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}",
                 "generated_at": datetime.now(timezone.utc).isoformat(),
-                "exporter_version": "2.5.0-enterprise",
+                "exporter_version": "2.6.0-enterprise",
             },
             "incident_report": {
                 "raw_text": incident_text,
                 "telemetry": telemetry or {},
+                "prediction": prediction or {},
+                "technician_feedback": technician_feedback or {},
             },
             "ai_analysis": analysis,
         }

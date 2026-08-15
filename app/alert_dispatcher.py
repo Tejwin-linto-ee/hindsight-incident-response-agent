@@ -1,8 +1,8 @@
-"""
+﻿"""
 Real-Time SRE Alert Dispatcher.
 
 Dispatches formatted incident cards and alerts to Slack, Microsoft Teams,
-Discord, PagerDuty, and custom webhook endpoints.
+Discord, PagerDuty, and Opsgenie webhook endpoints.
 """
 
 from datetime import datetime, timezone
@@ -31,7 +31,6 @@ class AlertDispatcher:
         actions = analysis.get("recommended_actions", ["Investigate logs"])
 
         color = "#F43F5E" if severity in ["P1", "CRITICAL"] else "#F59E0B"
-
         actions_text = "\n".join([f"• `{act}`" for act in actions[:3]])
 
         return {
@@ -115,6 +114,57 @@ class AlertDispatcher:
         }
 
     @classmethod
+    def format_pagerduty_payload(
+        cls,
+        analysis: dict[str, Any],
+        incident_id: str = "INC-AUTO",
+        routing_key: str = "",
+    ) -> dict[str, Any]:
+        """
+        Builds a PagerDuty Events API v2 payload.
+        """
+        severity_map = {"P1": "critical", "CRITICAL": "critical", "P2": "error", "P3": "warning", "P4": "info"}
+        sev = analysis.get("severity", "P2")
+        pd_sev = severity_map.get(sev, "error")
+
+        return {
+            "routing_key": routing_key,
+            "event_action": "trigger",
+            "dedup_key": incident_id,
+            "payload": {
+                "summary": f"[{sev}] {analysis.get('service', 'Service')} - {analysis.get('incident_summary', 'Incident')}",
+                "severity": pd_sev,
+                "source": analysis.get("service", "production-cluster"),
+                "component": analysis.get("category", "infrastructure"),
+                "custom_details": {
+                    "root_cause": analysis.get("root_cause", "Under investigation"),
+                    "confidence": analysis.get("confidence", 85),
+                },
+            },
+        }
+
+    @classmethod
+    def format_opsgenie_payload(
+        cls,
+        analysis: dict[str, Any],
+        incident_id: str = "INC-AUTO",
+    ) -> dict[str, Any]:
+        """
+        Builds an Opsgenie Alert API payload.
+        """
+        sev_map = {"P1": "P1", "CRITICAL": "P1", "P2": "P2", "P3": "P3", "P4": "P4"}
+        return {
+            "message": f"[{analysis.get('severity', 'P2')}] {analysis.get('service', 'Service')}: {analysis.get('incident_summary', 'Outage')}",
+            "alias": incident_id,
+            "description": f"Root cause: {analysis.get('root_cause', 'Under investigation')}",
+            "priority": sev_map.get(analysis.get("severity", "P2"), "P2"),
+            "details": {
+                "service": analysis.get("service", "Unknown"),
+                "category": analysis.get("category", "General"),
+            },
+        }
+
+    @classmethod
     def dispatch(
         cls,
         webhook_url: str,
@@ -125,7 +175,7 @@ class AlertDispatcher:
         Sends payload to the provided webhook URL via standard library urllib.
         """
         if not webhook_url or not webhook_url.strip():
-            return {"success": False, "error": "Webhook URL is empty."}
+            return {"success": False, "error": "Webhook integration is not configured."}
 
         data_bytes = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(
@@ -133,7 +183,7 @@ class AlertDispatcher:
             data=data_bytes,
             headers={
                 "Content-Type": "application/json",
-                "User-Agent": "Hindsight-Incident-Response/2.5.0",
+                "User-Agent": "Hindsight-Incident-Response/2.6.0",
             },
             method="POST",
         )

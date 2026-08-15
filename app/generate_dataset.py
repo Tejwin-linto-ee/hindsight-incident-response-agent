@@ -16,60 +16,7 @@ OUTPUT_PATH = Path("data/telemetry_dataset.csv")
 rng = np.random.default_rng(RANDOM_SEED)
 
 
-# ============================================================
-# COMPUTE DERIVED / ENGINEERED FEATURES
-# ============================================================
-
-def compute_engineered_features(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Compute domain-specific interaction terms and anomaly indicators.
-    """
-    df = df.copy()
-    
-    # 1. Database stress compound index
-    df["db_stress_index"] = (df["db_connections"] * df["db_pool_usage"]) / 100.0
-    
-    # 2. Queue pressure index
-    df["queue_pressure"] = (df["queue_depth"] * df["api_latency_ms"]) / 1000.0
-    
-    # 3. System compute & memory compound load
-    df["system_load_compound"] = (0.5 * df["cpu_percent"]) + (0.5 * df["memory_percent"])
-    
-    # 4. Traffic error density
-    df["traffic_error_density"] = (df["error_rate"] * df["request_rate"]) / 1000.0
-    
-    # 5. Network to API latency ratio
-    df["network_congestion_ratio"] = df["network_latency_ms"] / (df["api_latency_ms"] + 1e-5)
-    
-    # 6. Latency-Error divergence
-    df["latency_error_divergence"] = (df["api_latency_ms"] / 150.0) * (df["error_rate"] / 1.5)
-    
-    # 7. Maximum resource saturation
-    df["resource_saturation_max"] = df[["cpu_percent", "memory_percent", "disk_percent", "db_pool_usage"]].max(axis=1)
-    
-    # 8. Anomaly score (Normalized Z-score deviation from healthy baseline)
-    nominal_means = {
-        "cpu_percent": 45.0, "memory_percent": 50.0, "disk_percent": 55.0,
-        "db_connections": 45.0, "db_pool_usage": 45.0, "api_latency_ms": 150.0,
-        "error_rate": 1.5, "request_rate": 1000.0, "queue_depth": 30.0,
-        "network_latency_ms": 40.0, "traffic_growth_percent": 5.0
-    }
-    nominal_stds = {
-        "cpu_percent": 15.0, "memory_percent": 12.0, "disk_percent": 15.0,
-        "db_connections": 15.0, "db_pool_usage": 15.0, "api_latency_ms": 60.0,
-        "error_rate": 1.0, "request_rate": 250.0, "queue_depth": 15.0,
-        "network_latency_ms": 15.0, "traffic_growth_percent": 10.0
-    }
-    
-    z_scores_sq = 0.0
-    for col, mean in nominal_means.items():
-        std = nominal_stds[col]
-        z = (df[col] - mean) / std
-        z_scores_sq += (np.clip(z, 0, None)) ** 2
-        
-    df["anomaly_score"] = np.sqrt(z_scores_sq / len(nominal_means)).round(2)
-    
-    return df
+from app.feature_engineering import compute_engineered_features
 
 
 # ============================================================

@@ -127,36 +127,43 @@ flowchart TD
 hindsight-incident-response-agent/
 ├── app/
 │   ├── agent.py               # IncidentResponseAgent orchestration engine
-│   ├── alert_dispatcher.py    # Slack, Teams, PagerDuty webhook dispatcher
-│   ├── auth.py                # RBAC & SHA-256 audit log manager
-│   ├── chaos_engine.py        # Chaos Engineering fault injection simulator
-│   ├── failure_predictor.py   # Scikit-learn ML predictor & XAI attribution
+│   ├── alert_dispatcher.py    # Slack, Teams, PagerDuty, Opsgenie dispatcher
+│   ├── auth.py                # Zero-Trust RBAC & SHA-256 audit log manager
+│   ├── chaos_engine.py        # Safe Chaos Engineering fault injection simulator
+│   ├── failure_predictor.py   # Scikit-learn calibrated ensemble ML predictor
+│   ├── feature_engineering.py # Centralized 19-feature computation pipeline
 │   ├── hindsight_memory.py    # Hindsight vector client wrapper
 │   ├── incident_history.py    # Local incident tracking & lifecycle
 │   ├── llm.py                 # Multi-model LLM engine with resilient failover
 │   ├── memory_engine.py       # Multi-tier memory ranking & deduplication
+│   ├── playbooks.py           # Pre-emptive SRE remediation playbook registry
 │   ├── postmortem_exporter.py # Executive Postmortem & RCA exporter
 │   ├── runbook_generator.py   # Actionable CLI runbook & script generator
 │   ├── sre_chat.py            # Stateful SRE Copilot chat manager
-│   ├── telemetry_manager.py   # Global telemetry state manager
+│   ├── telemetry_manager.py   # Global telemetry stream state manager
 │   ├── telemetry_simulator.py # Real-time synthetic telemetry generator
-│   └── train_predictor.py     # ML training & validation pipeline
+│   ├── train_predictor.py     # ML training & validation pipeline
+│   ├── ttf_predictor.py       # Time-to-failure & urgency dynamics
+│   └── xai.py                 # Explainable AI (XAI) feature attribution
 ├── data/
 │   ├── audit_logs.json        # Immutable governance audit records
-│   ├── failure_predictor.joblib # Calibrated ML model artifact
+│   ├── failure_predictor.joblib # Calibrated ML ensemble artifact
 │   ├── failure_predictor_metrics.json # Model training metrics
 │   ├── incidents.json         # Seed incident repository
-│   ├── telemetry_dataset.csv  # Telemetry training dataset
+│   ├── telemetry_dataset.csv  # 19-feature telemetry training dataset
 │   └── users.json             # RBAC user credentials store
 ├── tests/
 │   ├── conftest.py            # Pytest path and fixture configurations
-│   ├── test_mock_offline.py   # Fast offline mock CI/CD test suite
-│   ├── test_new_features.py   # Unit tests for Runbooks, RCA, Alerts, Chaos
 │   ├── test_agent.py          # End-to-end incident investigation test
-│   ├── test_failure_predictor.py # ML classifier validation suite
-│   ├── test_groq.py           # LLM reasoning & schema validation test
-│   ├── test_hindsight.py      # Hindsight vector client recall test
-│   └── test_learning.py       # Resolution learning loop test
+│   ├── test_batch6_ml.py      # ML 19-features, XAI, TTF & playbook tests
+│   ├── test_batch7_ops.py     # Runbooks, Postmortems, Alerts, Copilot tests
+│   ├── test_failure_predictor.py # Failure predictor regression test suite
+│   ├── test_hindsight_memory.py  # Hindsight vector memory & re-ranking tests
+│   ├── test_learning.py       # Organizational learning loop test
+│   ├── test_llm_failover.py   # Multi-model LLM failover tests
+│   ├── test_mock_offline.py   # Fast offline mock CI/CD test suite
+│   ├── test_new_features.py   # Runbook, RCA, Alert, Chaos integration tests
+│   └── test_security_auth.py  # RBAC, lockout & security audit tests
 ├── .env.example               # Configuration template
 ├── main.py                    # Streamlit SRE Command Center application
 ├── load_incidents.py          # Seed incident data loader
@@ -216,17 +223,17 @@ Open `http://localhost:8501` in your browser. Default demo credentials:
 
 ## 🧪 Automated Testing
 
-Execute the comprehensive test suites:
+Execute the comprehensive test suites across all components:
 
 ```bash
-# 1. Fast Offline CI/CD Unit Test Suite (<2 seconds, zero network required)
+# 1. Run full test suite (37 unit & integration tests)
 pytest tests/ -v
 
-# 2. End-to-End Live Integration Tests
-pytest test_learning.py
-
-# 3. Machine Learning Predictor Validation across all 7 Failure Archetypes
-python test_failure_predictor.py
+# 2. Run specific batch tests
+pytest tests/test_batch6_ml.py -v
+pytest tests/test_batch7_ops.py -v
+pytest tests/test_security_auth.py -v
+pytest tests/test_llm_failover.py -v
 ```
 
 ---
