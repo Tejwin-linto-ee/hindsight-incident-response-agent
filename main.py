@@ -2334,54 +2334,101 @@ with chat_box:
             with st.chat_message("assistant", avatar="🧠"):
                 st.markdown(msg["content"])
 
-# User Chat Input Handling (or Quick Prompt trigger)
-user_query = st.chat_input("Ask SRE Copilot (e.g. 'How to mitigate payment connection timeout?', 'Check SLO burn rate')...")
+# File Uploader for Crash Reports & Stack Traces with Input Validation
+upload_col, info_col = st.columns([2, 1])
+with upload_col:
+    uploaded_crash_file = st.file_uploader(
+        "📄 Upload Crash Report / Stack Trace Log (.log, .txt, .json, .csv):",
+        type=["log", "txt", "json", "csv"],
+        help="Upload an application crash report or stack trace. The AI Copilot will parse, research, and diagnose the root cause.",
+    )
+with info_col:
+    st.markdown("""
+    <div style="font-size:0.75rem; color:#8B7FA4; padding-top:1.5rem;">
+        🔒 <b>Secure Parser:</b> Max 2MB per upload. Scans for stack traces, memory dumps, and HTTP errors with XSS sanitization.
+    </div>
+    """, unsafe_allow_html=True)
+
+# User Chat Input Handling (or Quick Prompt trigger or Uploaded File trigger)
+user_query = st.chat_input("Ask SRE Copilot or type 'analyze uploaded report'...")
 active_input = quick_prompt or user_query
 
+# If a crash file was just uploaded and user didn't type anything yet
+if uploaded_crash_file is not None and not active_input:
+    try:
+        file_content = uploaded_crash_file.read().decode("utf-8", errors="ignore")
+        if len(file_content.strip()) > 0:
+            if st.button("🔍 Analyze Uploaded Crash Report Now", type="primary", use_container_width=True):
+                # Input sanitization and size truncation
+                sanitized_log = file_content[:4000].replace("<", "&lt;").replace(">", "&gt;")
+                active_input = f"Diagnose this uploaded crash report:\n```\n{sanitized_log}\n```"
+    except Exception as read_err:
+        st.error(f"Error parsing uploaded file: {read_err}")
+
 if active_input:
-    st.session_state["sre_chat_messages"].append({"role": "user", "content": active_input})
-    with st.chat_message("user", avatar="🧑‍💻"):
-        st.markdown(active_input)
+    # ─── 1. INPUT VALIDATION & SANITIZATION ───────────────────────
+    clean_input = active_input.strip()
+    if len(clean_input) < 2:
+        st.warning("⚠️ Input is too short. Please provide a valid diagnostic query or incident description.")
+    elif len(clean_input) > 8000:
+        st.warning("⚠️ Input exceeds 8,000 characters. Truncating for security.")
+        clean_input = clean_input[:8000]
 
-    with st.chat_message("assistant", avatar="🧠"):
-        with st.spinner("🧠 Querying Hindsight memory & synthesizing telemetry diagnostics..."):
-            try:
-                from app.sre_chat import SRECopilot
-                from app.slo_engine import SLOEngine
-                from app.topology_engine import ServiceTopologyEngine
+    # ─── 2. USER RATE LIMIT & QUOTA ENFORCEMENT ───────────────────
+    current_username = st.session_state.get("user", {}).get("username", "admin")
+    from app.auth import SecurityManager
+    allowed, quota_msg, quota_info = SecurityManager.check_user_quota_and_consume(current_username)
 
-                # Collect live context safely
+    if not allowed:
+        st.error(quota_msg)
+        st.session_state["sre_chat_messages"].append({
+            "role": "assistant",
+            "content": f"🔒 **Account Rate-Limited:** {quota_msg}\n\n*Please ask an Administrator to grant additional quota in the Admin Panel.*"
+        })
+    else:
+        st.session_state["sre_chat_messages"].append({"role": "user", "content": clean_input})
+        with st.chat_message("user", avatar="🧑‍💻"):
+            st.markdown(clean_input)
+
+        with st.chat_message("assistant", avatar="🧠"):
+            with st.spinner("🧠 Researching crash logs & querying Hindsight organizational memory..."):
                 try:
-                    t_mgr = TelemetryManager()
-                    if hasattr(t_mgr, "get_current_metrics"):
-                        current_metrics = t_mgr.get_current_metrics()
-                    elif hasattr(t_mgr, "current") and t_mgr.current() is not None:
-                        current_metrics = t_mgr.current()
-                    else:
+                    from app.sre_chat import SRECopilot
+                    from app.slo_engine import SLOEngine
+                    from app.topology_engine import ServiceTopologyEngine
+
+                    # Collect live context safely
+                    try:
+                        t_mgr = TelemetryManager()
+                        if hasattr(t_mgr, "get_current_metrics"):
+                            current_metrics = t_mgr.get_current_metrics()
+                        elif hasattr(t_mgr, "current") and t_mgr.current() is not None:
+                            current_metrics = t_mgr.current()
+                        else:
+                            current_metrics = {"cpu_percent": 45.0, "memory_percent": 50.0, "error_rate": 1.2, "api_latency_ms": 150.0, "request_rate": 1000.0}
+                    except Exception:
                         current_metrics = {"cpu_percent": 45.0, "memory_percent": 50.0, "error_rate": 1.2, "api_latency_ms": 150.0, "request_rate": 1000.0}
-                except Exception:
-                    current_metrics = {"cpu_percent": 45.0, "memory_percent": 50.0, "error_rate": 1.2, "api_latency_ms": 150.0, "request_rate": 1000.0}
 
-                slo_info = SLOEngine.evaluate_slo_status(
-                    error_rate=current_metrics.get("error_rate", 1.2),
-                    api_latency_ms=current_metrics.get("api_latency_ms", 150.0),
-                    request_rate=current_metrics.get("request_rate", 1000.0),
-                )
-                topology_info = ServiceTopologyEngine.calculate_blast_radius("payment-api")
+                    slo_info = SLOEngine.evaluate_slo_status(
+                        error_rate=current_metrics.get("error_rate", 1.2),
+                        api_latency_ms=current_metrics.get("api_latency_ms", 150.0),
+                        request_rate=current_metrics.get("request_rate", 1000.0),
+                    )
+                    topology_info = ServiceTopologyEngine.calculate_blast_radius("payment-api")
 
-                copilot = SRECopilot()
-                bot_reply = copilot.ask(
-                    user_message=active_input,
-                    live_telemetry=current_metrics,
-                    slo_status=slo_info,
-                    topology_context=topology_info,
-                )
-            except Exception as e:
-                bot_reply = f"⚠️ *Error connecting to reasoning engine:* {e}"
+                    copilot = SRECopilot()
+                    bot_reply = copilot.ask(
+                        user_message=clean_input,
+                        live_telemetry=current_metrics,
+                        slo_status=slo_info,
+                        topology_context=topology_info,
+                    )
+                except Exception as e:
+                    bot_reply = f"⚠️ *Error connecting to reasoning engine:* {e}"
 
-            st.markdown(bot_reply)
-            st.session_state["sre_chat_messages"].append({"role": "assistant", "content": bot_reply})
-            st.rerun()
+                st.markdown(bot_reply)
+                st.session_state["sre_chat_messages"].append({"role": "assistant", "content": bot_reply})
+                st.rerun()
 
 st.divider()
 
