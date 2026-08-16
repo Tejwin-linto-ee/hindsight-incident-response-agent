@@ -66,6 +66,60 @@ def test_rejection_flow(tmp_path, monkeypatch):
     assert "declined" in msg.lower() or "rejected" in msg.lower()
 
 
+def test_admin_lockout_and_demotion_protections(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.auth.USERS_FILE", str(tmp_path / "users.json"))
+    monkeypatch.setattr("app.auth.AUDIT_LOGS_FILE", str(tmp_path / "audit_logs.json"))
+
+    # Try deleting sole admin -> should fail
+    ok, msg = SecurityManager.delete_user("admin", "admin")
+    assert ok is False
+
+    # Try demoting sole admin -> should fail
+    ok, msg = SecurityManager.update_user_role("admin", "Viewer", False, "admin")
+    # admin username is always admin
+    users = SecurityManager._load_users()
+    assert users["admin"]["is_admin"] is True
+
+
+def test_user_rate_limiting_and_admin_unlock(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.auth.USERS_FILE", str(tmp_path / "users.json"))
+    monkeypatch.setattr("app.auth.AUDIT_LOGS_FILE", str(tmp_path / "audit_logs.json"))
+
+    # Register and approve a test user
+    SecurityManager.request_access("test_operator", "Pass12345!", "Operator")
+    SecurityManager.approve_user("test_operator", "admin")
+
+    # Set quota to 2 for fast testing
+    users = SecurityManager._load_users()
+    users["test_operator"]["quota_limit"] = 2
+    SecurityManager._save_users(users)
+
+    # 1st request -> allowed
+    ok1, msg1, info1 = SecurityManager.check_user_quota_and_consume("test_operator")
+    assert ok1 is True
+    assert info1["usage_count"] == 1
+
+    # 2nd request -> allowed
+    ok2, msg2, info2 = SecurityManager.check_user_quota_and_consume("test_operator")
+    assert ok2 is True
+    assert info2["usage_count"] == 2
+
+    # 3rd request -> rate limit exceeded & account locked!
+    ok3, msg3, info3 = SecurityManager.check_user_quota_and_consume("test_operator")
+    assert ok3 is False
+    assert "rate limit reached" in msg3.lower()
+    assert info3["is_locked"] is True
+
+    # Admin unlocks and grants additional quota
+    unlock_ok, unlock_msg = SecurityManager.admin_reset_or_grant_quota("test_operator", additional_quota=10, admin_actor="admin")
+    assert unlock_ok is True
+    assert "unlocked" in unlock_msg.lower()
+
+    # 4th request -> now allowed again!
+    ok4, msg4, info4 = SecurityManager.check_user_quota_and_consume("test_operator")
+    assert ok4 is True
+
+
 def test_last_admin_protection(tmp_path, monkeypatch):
     monkeypatch.setattr("app.auth.USERS_FILE", str(tmp_path / "users.json"))
     monkeypatch.setattr("app.auth.AUDIT_LOGS_FILE", str(tmp_path / "audit_logs.json"))

@@ -204,6 +204,71 @@ class SecurityManager:
         return True, "Registration submitted! Your account is pending administrator confirmation."
 
     # ─────────────────────────────────────────────────────────────
+    #  RATE LIMITING & ADMIN QUOTA MANAGEMENT
+    # ─────────────────────────────────────────────────────────────
+
+    DEFAULT_USER_QUOTA: int = 15  # Max investigations/queries for non-admin before requiring admin approval
+
+    @classmethod
+    def check_user_quota_and_consume(cls, username: str) -> tuple[bool, str, Dict[str, Any]]:
+        """
+        Enforces a usage quota for non-admin users.
+        If quota is exhausted, locks the user until an Admin grants approval/reset.
+        Returns: (allowed: bool, message: str, quota_info: dict)
+        """
+        users = cls._load_users()
+        u_key = username.strip().lower()
+        user = users.get(u_key)
+
+        if not user:
+            return False, "User not found.", {}
+
+        # Admins have unlimited quota
+        if user.get("is_admin", False) or u_key == "admin":
+            return True, "Admin access: Unlimited quota.", {"usage_count": 0, "quota_limit": "UNLIMITED", "is_locked": False}
+
+        usage_count = user.get("usage_count", 0)
+        quota_limit = user.get("quota_limit", cls.DEFAULT_USER_QUOTA)
+        is_locked = user.get("quota_locked", False)
+
+        if is_locked or usage_count >= quota_limit:
+            user["quota_locked"] = True
+            cls._save_users(users)
+            cls.log_event("RATE_LIMIT_EXCEEDED", u_key, f"User exceeded quota ({usage_count}/{quota_limit}). Locked awaiting Admin grant.", "BLOCKED")
+            return False, f"⚠️ Rate limit reached ({usage_count}/{quota_limit} queries used). Your account is locked until an Administrator approves an extension.", {
+                "usage_count": usage_count,
+                "quota_limit": quota_limit,
+                "is_locked": True,
+            }
+
+        # Increment usage
+        user["usage_count"] = usage_count + 1
+        cls._save_users(users)
+        return True, "Quota verified.", {
+            "usage_count": user["usage_count"],
+            "quota_limit": quota_limit,
+            "is_locked": False,
+        }
+
+    @classmethod
+    def admin_reset_or_grant_quota(cls, target_username: str, additional_quota: int, admin_actor: str) -> tuple[bool, str]:
+        """
+        Admin action to unlock a rate-limited user and grant additional queries.
+        """
+        users = cls._load_users()
+        t_key = target_username.strip().lower()
+        if t_key not in users:
+            return False, "User not found."
+
+        user = users[t_key]
+        user["quota_locked"] = False
+        user["quota_limit"] = user.get("quota_limit", cls.DEFAULT_USER_QUOTA) + max(5, additional_quota)
+        cls._save_users(users)
+
+        cls.log_event("ADMIN_QUOTA_RESET", admin_actor, f"Admin unlocked '{t_key}' and increased quota to {user['quota_limit']}", "SUCCESS")
+        return True, f"User '{t_key}' unlocked successfully. New quota limit: {user['quota_limit']} queries."
+
+    # ─────────────────────────────────────────────────────────────
     #  ADMIN USER MANAGEMENT
     # ─────────────────────────────────────────────────────────────
 
