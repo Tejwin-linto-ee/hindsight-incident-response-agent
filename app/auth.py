@@ -9,6 +9,10 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 USERS_FILE = os.path.join(DATA_DIR, "users.json")
 AUDIT_LOGS_FILE = os.path.join(DATA_DIR, "audit_logs.json")
 
+# In-memory session store: token -> authenticated user context
+_active_sessions: Dict[str, Dict[str, Any]] = {}
+
+
 class SecurityManager:
     """
     Enterprise Security, RBAC, Approval Workflow & Access Audit Manager.
@@ -140,13 +144,37 @@ class SecurityManager:
 
         cls.log_event("AUTH_LOGIN", username, f"Successful login ({user.get('role', 'Operator')})", "SUCCESS")
 
-        return {
+        session_token = secrets.token_hex(32)
+        user_dict = {
             "username": user["username"],
             "role": user.get("role", "SRE Engineer"),
             "is_admin": user.get("is_admin", False) or u_key == "admin",
-            "session_token": secrets.token_hex(32),
+            "session_token": session_token,
+            "tenant_id": user.get("tenant_id", "default"),
             "status": status,
-        }, "SUCCESS"
+        }
+        cls._register_session(session_token, user_dict)
+        return user_dict, "SUCCESS"
+
+    @classmethod
+    def _register_session(cls, token: str, user: Dict[str, Any]) -> None:
+        """Store an authenticated session token for subsequent API requests."""
+        _active_sessions[token] = {
+            "username": user["username"],
+            "role": user.get("role", "SRE Engineer"),
+            "tenant_id": user.get("tenant_id", "default"),
+            "is_admin": user.get("is_admin", False),
+        }
+
+    @classmethod
+    def verify_token(cls, token: str) -> Dict[str, Any]:
+        """Validate a bearer token and return the associated user context."""
+        if not token:
+            raise ValueError("Missing authentication token")
+        session = _active_sessions.get(token)
+        if not session:
+            raise ValueError("Invalid or expired authentication token")
+        return session
 
     @classmethod
     def request_access(cls, username: str, password: str, role: str = "SRE Engineer", reason: str = "") -> tuple[bool, str]:

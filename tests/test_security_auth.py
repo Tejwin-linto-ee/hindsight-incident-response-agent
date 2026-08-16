@@ -100,3 +100,20 @@ def test_audit_logs_recording(tmp_path, monkeypatch):
     assert logs[0]["event_type"] == "TEST_EVENT"
     assert logs[0]["actor"] == "admin"
     assert "password" not in str(logs).lower()
+
+
+def test_session_token_verification(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.auth.USERS_FILE", str(tmp_path / "users.json"))
+    monkeypatch.setattr("app.auth.AUDIT_LOGS_FILE", str(tmp_path / "audit_logs.json"))
+    monkeypatch.setattr("app.auth._active_sessions", {})
+
+    user, msg = SecurityManager.authenticate("admin", "IncidentCommander2026!")
+    assert user is not None
+    token = user["session_token"]
+
+    verified = SecurityManager.verify_token(token)
+    assert verified["username"] == "admin"
+    assert verified["role"] == user["role"]
+
+    with pytest.raises(ValueError, match="Invalid or expired"):
+        SecurityManager.verify_token("not-a-real-token")

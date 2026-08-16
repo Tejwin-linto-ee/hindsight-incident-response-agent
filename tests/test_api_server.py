@@ -25,13 +25,22 @@ def test_health_check(client):
 
 def test_auth_login_success(client):
     with patch("app.auth.SecurityManager.authenticate") as mock_auth:
-        mock_auth.return_value = ({"username": "admin", "role": "admin", "tenant_id": "default"}, "Login successful")
+        mock_auth.return_value = (
+            {
+                "username": "admin",
+                "role": "admin",
+                "tenant_id": "default",
+                "session_token": "test_session_token_abc123",
+            },
+            "Login successful",
+        )
 
         response = client.post("/api/v1/auth/login", json={"username": "admin", "password": "correct_password"})
         assert response.status_code == 200
         data = response.json()
         assert "access_token" in data
         assert data["username"] == "admin"
+        assert data["access_token"] == "test_session_token_abc123"
 
 
 def test_auth_login_failure(client):
@@ -76,3 +85,19 @@ def test_audit_logs(client):
         response = client.get("/api/v1/audit/logs")
         assert response.status_code == 200
         assert "audit_logs" in response.json()
+
+
+def test_bearer_token_auth_success(client):
+    with patch("app.auth.SecurityManager.verify_token") as mock_verify:
+        mock_verify.return_value = {"username": "jdoe", "role": "SRE Engineer", "tenant_id": "default"}
+        response = client.get("/api/v1/audit/logs", headers={"Authorization": "Bearer valid_token_xyz"})
+        assert response.status_code == 200
+        mock_verify.assert_called_once_with("valid_token_xyz")
+
+
+def test_bearer_token_auth_invalid(client):
+    with patch("app.auth.SecurityManager.verify_token") as mock_verify:
+        mock_verify.side_effect = ValueError("Invalid or expired authentication token")
+        response = client.get("/api/v1/audit/logs", headers={"Authorization": "Bearer bad_token"})
+        assert response.status_code == 401
+        assert "Invalid authentication token" in response.json()["detail"]

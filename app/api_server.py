@@ -164,7 +164,7 @@ async def login(auth: AuthRequest):
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=msg)
     
-    token = f"token_{user['username']}_{datetime.now(timezone.utc).timestamp()}"
+    token = user["session_token"]
     return {
         "access_token": token,
         "token_type": "bearer",
