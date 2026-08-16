@@ -1,6 +1,7 @@
 {
   "model": "Calibrated Ensemble (RandomForest + ExtraTrees)",
   "model_type": "multiclass_failure_classifier",
+  "model_version": "2.6.0-enterprise",
   "accuracy": 1.0,
   "precision": 1.0,
   "recall": 1.0,

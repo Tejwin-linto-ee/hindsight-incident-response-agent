@@ -1,9 +1,16 @@
 import os
+import sys
 from pathlib import Path
+
+# Add project root to sys.path if run directly
+project_root = Path(__file__).resolve().parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 import numpy as np
 import pandas as pd
 
+from app.feature_engineering import compute_engineered_features
 
 # ============================================================
 # CONFIGURATION
@@ -14,9 +21,6 @@ NUMBER_OF_SAMPLES = 16000
 OUTPUT_PATH = Path("data/telemetry_dataset.csv")
 
 rng = np.random.default_rng(RANDOM_SEED)
-
-
-from app.feature_engineering import compute_engineered_features
 
 
 # ============================================================
