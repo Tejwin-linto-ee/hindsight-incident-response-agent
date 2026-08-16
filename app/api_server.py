@@ -64,8 +64,8 @@ security_bearer = HTTPBearer(auto_error=False)
 # ============================================================
 
 class AuthRequest(BaseModel):
-    username: str = Field(..., example="admin")
-    password: str = Field(..., example="admin123")
+    username: str = Field(..., json_schema_extra={"example": "admin"})
+    password: str = Field(..., json_schema_extra={"example": "admin123"})
 
 
 class AuthResponse(BaseModel):
@@ -77,40 +77,40 @@ class AuthResponse(BaseModel):
 
 
 class TelemetryInput(BaseModel):
-    cpu_percent: float = Field(..., ge=0.0, le=100.0, example=85.5)
-    memory_percent: float = Field(..., ge=0.0, le=100.0, example=92.0)
-    disk_percent: float = Field(..., ge=0.0, le=100.0, example=65.0)
-    db_connections: float = Field(..., ge=0.0, example=94.0)
-    db_pool_usage: float = Field(..., ge=0.0, le=100.0, example=96.0)
-    api_latency_ms: float = Field(..., ge=0.0, example=1200.0)
-    error_rate: float = Field(..., ge=0.0, example=8.5)
-    request_rate: float = Field(..., ge=0.0, example=1800.0)
-    queue_depth: float = Field(..., ge=0.0, example=140.0)
-    network_latency_ms: float = Field(..., ge=0.0, example=85.0)
-    traffic_growth_percent: float = Field(..., example=25.0)
+    cpu_percent: float = Field(..., ge=0.0, le=100.0, json_schema_extra={"example": 85.5})
+    memory_percent: float = Field(..., ge=0.0, le=100.0, json_schema_extra={"example": 92.0})
+    disk_percent: float = Field(..., ge=0.0, le=100.0, json_schema_extra={"example": 65.0})
+    db_connections: float = Field(..., ge=0.0, json_schema_extra={"example": 94.0})
+    db_pool_usage: float = Field(..., ge=0.0, le=100.0, json_schema_extra={"example": 96.0})
+    api_latency_ms: float = Field(..., ge=0.0, json_schema_extra={"example": 1200.0})
+    error_rate: float = Field(..., ge=0.0, json_schema_extra={"example": 8.5})
+    request_rate: float = Field(..., ge=0.0, json_schema_extra={"example": 1800.0})
+    queue_depth: float = Field(..., ge=0.0, json_schema_extra={"example": 140.0})
+    network_latency_ms: float = Field(..., ge=0.0, json_schema_extra={"example": 85.0})
+    traffic_growth_percent: float = Field(..., json_schema_extra={"example": 25.0})
 
 
 class IncidentInvestigationRequest(BaseModel):
-    incident_description: str = Field(..., min_length=5, example="Payment API returning HTTP 503 errors. Connection pool exhausted.")
+    incident_description: str = Field(..., min_length=5, json_schema_extra={"example": "Payment API returning HTTP 503 errors. Connection pool exhausted."})
     telemetry: Optional[TelemetryInput] = None
     trigger_alert: bool = Field(default=False, description="Whether to dispatch alert to configured webhooks")
 
 
 class AutonomousMitigationRequest(BaseModel):
-    incident_description: str = Field(..., example="Redis cache memory saturation causing latency spikes")
+    incident_description: str = Field(..., json_schema_extra={"example": "Redis cache memory saturation causing latency spikes"})
     auto_approve: bool = Field(default=False, description="Execute non-destructive actions without manual gate")
 
 
 class MemoryRetainRequest(BaseModel):
-    title: str = Field(..., example="Payment Gateway Connection Timeout")
-    description: str = Field(..., example="HikariCP connection pool exhausted due to unindexed query.")
-    resolution: str = Field(..., example="Scaled connection pool from 50 to 150 and deployed composite index.")
-    tags: List[str] = Field(default_factory=list, example=["database", "p1", "payment"])
+    title: str = Field(..., json_schema_extra={"example": "Payment Gateway Connection Timeout"})
+    description: str = Field(..., json_schema_extra={"example": "HikariCP connection pool exhausted due to unindexed query."})
+    resolution: str = Field(..., json_schema_extra={"example": "Scaled connection pool from 50 to 150 and deployed composite index."})
+    tags: List[str] = Field(default_factory=list, json_schema_extra={"example": ["database", "p1", "payment"]})
     service: str = Field(default="payment-service")
 
 
 class CopilotChatRequest(BaseModel):
-    message: str = Field(..., example="What is the current database pool saturation and recommended mitigation?")
+    message: str = Field(..., json_schema_extra={"example": "What is the current database pool saturation and recommended mitigation?"})
     session_history: Optional[List[Dict[str, str]]] = Field(default_factory=list)
 
 
