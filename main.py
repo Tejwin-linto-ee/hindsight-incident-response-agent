@@ -2269,8 +2269,62 @@ else:
 
 
 # ============================================================
-# FOOTER
+# SRE COPILOT AI CHATBOT
 # ============================================================
+
+st.divider()
+
+st.markdown("""
+<div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:0.4rem;">
+    <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, #A855F7, #06B6D4); display:flex; align-items:center; justify-content:center; font-size:1.2rem; box-shadow:0 0 16px rgba(168,85,247,0.4);">
+        🤖
+    </div>
+    <div>
+        <div class="section-title" style="font-size:1.35rem; margin:0;">SRE Copilot · Interactive AI Incident Assistant</div>
+        <div class="section-desc" style="margin:0;">Ask real-time questions, request diagnostic runbooks, or query organizational incident memory.</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+if "sre_chat_messages" not in st.session_state:
+    st.session_state["sre_chat_messages"] = [
+        {
+            "role": "assistant",
+            "content": "👋 **Hello! I am your AI SRE Copilot.** I have full context of active telemetry, historical Hindsight memories, SLO error budgets, and failure predictor models. How can I assist your incident triage today?",
+        }
+    ]
+
+# Chat container styling
+chat_container = st.container()
+with chat_container:
+    for msg in st.session_state["sre_chat_messages"]:
+        if msg["role"] == "user":
+            with st.chat_message("user", avatar="🧑‍💻"):
+                st.markdown(msg["content"])
+        else:
+            with st.chat_message("assistant", avatar="🧠"):
+                st.markdown(msg["content"])
+
+# User Chat Input
+user_query = st.chat_input("Ask SRE Copilot (e.g. 'How to mitigate payment connection timeout?', 'Check SLO burn rate')...")
+
+if user_query:
+    st.session_state["sre_chat_messages"].append({"role": "user", "content": user_query})
+    with st.chat_message("user", avatar="🧑‍💻"):
+        st.markdown(user_query)
+
+    with st.chat_message("assistant", avatar="🧠"):
+        with st.spinner("Analyzing with Hindsight memory & telemetry context..."):
+            try:
+                from app.sre_chat import SRECopilot
+                copilot = SRECopilot()
+                bot_reply = copilot.ask(user_message=user_query)
+            except Exception as e:
+                bot_reply = f"⚠️ *Error connecting to LLM reasoning engine:* {e}"
+
+            st.markdown(bot_reply)
+            st.session_state["sre_chat_messages"].append({"role": "assistant", "content": bot_reply})
+            st.rerun()
 
 st.divider()
 
