@@ -418,7 +418,7 @@ Return ONLY valid JSON.
         return data
 
     # ========================================================
-    # INTERACTIVE SRE COPILOT CHAT
+    # INTERACTIVE SRE COPILOT CHAT (FULL CHATGPT MODE)
     # ========================================================
 
     def chat_reply(
@@ -427,33 +427,51 @@ Return ONLY valid JSON.
         incident_context: dict[str, Any] | None = None,
     ) -> str:
         """
-        Responds to conversational queries from the SRE during an active outage.
+        Responds to conversational queries like ChatGPT with deep technical mastery,
+        incident intelligence, coding expertise, and conversational warmth.
         """
         system_prompt = (
-            "You are an expert AI SRE Incident Commander Copilot. "
-            "You are assisting a live engineer responding to a production incident. "
-            "Provide concise, mathematically sound, concrete infrastructure advice. "
-            "Reference specific CLI commands, rollback steps, or metric trade-offs when relevant."
+            "You are a world-class AI Assistant and SRE Incident Commander Copilot, combining the conversational versatility, helpfulness, and depth of ChatGPT with deep systems engineering expertise.\n\n"
+            "Capabilities:\n"
+            "- Answer any question clearly and comprehensively (general topics, tech stack, architectures, Python, Docker, Kubernetes, AWS/GCP, databases, DevOps).\n"
+            "- If responding to production outages, provide concrete root-cause analysis, exact CLI commands, rollback steps, and SLO math.\n"
+            "- If responding to general questions or greetings, be friendly, intelligent, articulate, and engaging.\n"
+            "- Format all responses cleanly using Markdown, code snippets, lists, and bold headings."
         )
 
         context_str = ""
         if incident_context:
-            context_str = (
-                f"\n\n[ACTIVE INCIDENT CONTEXT]\n"
-                f"Service: {incident_context.get('service', 'N/A')}\n"
-                f"Severity: {incident_context.get('severity', 'N/A')}\n"
-                f"Root Cause: {incident_context.get('root_cause', 'N/A')}\n"
-                f"Summary: {incident_context.get('incident_summary', 'N/A')}\n"
-            )
+            try:
+                context_str = (
+                    f"\n\n[LIVE OBSERVABILITY & SYSTEM TELEMETRY]\n"
+                    + json.dumps(incident_context, indent=2, default=str)
+                )
+            except Exception:
+                context_str = f"\n\n[LIVE OBSERVABILITY CONTEXT]: {str(incident_context)}"
 
         full_system = system_prompt + context_str
 
         # Format conversation for completion
         user_prompt = "\n".join([f"{msg['role'].upper()}: {msg['content']}" for msg in messages])
 
-        return self._execute_completion(
-            system_prompt=full_system,
-            user_prompt=user_prompt,
-            temperature=0.2,
-            max_tokens=1000,
-        )
+        try:
+            return self._execute_completion(
+                system_prompt=full_system,
+                user_prompt=user_prompt,
+                temperature=0.3,
+                max_tokens=1500,
+            )
+        except Exception as e:
+            # Resilient conversational fallback if API key is rate-limited or unavailable
+            last_user_msg = messages[-1]["content"] if messages else ""
+            if last_user_msg.lower().strip() in ["hi", "hello", "hey", "help"]:
+                return (
+                    "👋 **Hello! I am your AI SRE Copilot & Intelligence Assistant.**\n\n"
+                    "I am standing by with full visibility into your live telemetry, Hindsight memory bank, failure predictors, and SLO error budgets.\n\n"
+                    "**How can I help you right now?**\n"
+                    "- 🔍 *Triage active latency or connection spikes*\n"
+                    "- 📊 *Audit error budgets and SLO burn rates*\n"
+                    "- 🛠️ *Generate emergency rollback and mitigation runbooks*\n"
+                    "- 💡 *Explain system architecture and code*"
+                )
+            return f"⚠️ **AI Copilot Notice:** {str(e)}"
