@@ -17,7 +17,7 @@ class SRECopilot:
     and automated operational action parsing.
     """
 
-    MAX_HISTORY: int = 30
+    MAX_HISTORY: int = 20
 
     def __init__(self, llm: Optional[IncidentLLM] = None) -> None:
         self.llm = llm or IncidentLLM()
