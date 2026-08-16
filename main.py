@@ -2269,34 +2269,63 @@ else:
 
 
 # ============================================================
-# SRE COPILOT AI CHATBOT
+# SRE COPILOT AI CHATBOT (SUPERCHARGED)
 # ============================================================
 
 st.divider()
 
 st.markdown("""
-<div style="display:flex; align-items:center; gap:0.75rem; margin-bottom:0.4rem;">
-    <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, #A855F7, #06B6D4); display:flex; align-items:center; justify-content:center; font-size:1.2rem; box-shadow:0 0 16px rgba(168,85,247,0.4);">
-        🤖
+<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.6rem;">
+    <div style="display:flex; align-items:center; gap:0.75rem;">
+        <div style="width:38px; height:38px; border-radius:12px; background:linear-gradient(135deg, #A855F7, #06B6D4); display:flex; align-items:center; justify-content:center; font-size:1.3rem; box-shadow:0 0 20px rgba(168,85,247,0.45);">
+            🤖
+        </div>
+        <div>
+            <div class="section-title" style="font-size:1.4rem; margin:0; letter-spacing:-0.02em;">SRE Copilot · Mission-Critical AI Assistant</div>
+            <div class="section-desc" style="margin:0;">Multi-turn conversational reasoning grounded in real-time telemetry, Hindsight memory, and SLO error budgets.</div>
+        </div>
     </div>
-    <div>
-        <div class="section-title" style="font-size:1.35rem; margin:0;">SRE Copilot · Interactive AI Incident Assistant</div>
-        <div class="section-desc" style="margin:0;">Ask real-time questions, request diagnostic runbooks, or query organizational incident memory.</div>
+    <div style="display:flex; align-items:center; gap:0.5rem;">
+        <span style="font-size:0.75rem; background:rgba(52,211,153,0.15); color:#34D399; padding:3px 10px; border-radius:20px; border:1px solid rgba(52,211,153,0.3); font-weight:600;">
+            ● Online · Kimi K2 / Groq Mesh
+        </span>
     </div>
 </div>
 """, unsafe_allow_html=True)
 
-if "sre_chat_messages" not in st.session_state:
+# Quick Action Prompt Chips
+st.markdown("<div style='font-size:0.8rem; font-weight:600; color:#C0B4D5; margin-bottom:0.3rem;'>⚡ Quick Diagnostic Prompts:</div>", unsafe_allow_html=True)
+q_col1, q_col2, q_col3, q_col4, q_col5 = st.columns(5)
+
+quick_prompt = None
+with q_col1:
+    if st.button("🔥 Diagnose Outage", use_container_width=True):
+        quick_prompt = "Perform an immediate root-cause diagnosis based on active telemetry and organizational memory."
+with q_col2:
+    if st.button("📉 Check SLO Burn", use_container_width=True):
+        quick_prompt = "Calculate current SLO burn rate and estimated hours until error budget depletion."
+with q_col3:
+    if st.button("💥 Blast Radius", use_container_width=True):
+        quick_prompt = "Evaluate downstream microservice dependencies and financial downtime cost per minute."
+with q_col4:
+    if st.button("🛠️ Generate Runbook", use_container_width=True):
+        quick_prompt = "Draft an emergency multi-step CLI runbook for immediate pod restart and pool scaling."
+with q_col5:
+    if st.button("🧹 Clear Chat", use_container_width=True):
+        st.session_state["sre_chat_messages"] = []
+        st.rerun()
+
+if "sre_chat_messages" not in st.session_state or not st.session_state["sre_chat_messages"]:
     st.session_state["sre_chat_messages"] = [
         {
             "role": "assistant",
-            "content": "👋 **Hello! I am your AI SRE Copilot.** I have full context of active telemetry, historical Hindsight memories, SLO error budgets, and failure predictor models. How can I assist your incident triage today?",
+            "content": "👋 **Welcome to the SRE Command Room.** I am your autonomous AI Incident Copilot. I have full context of active telemetry, historical Hindsight memories, SLO error budgets, and failure predictor models.\n\n*Click one of the quick diagnostic chips above or type a command below to begin.*",
         }
     ]
 
-# Chat container styling
-chat_container = st.container()
-with chat_container:
+# Chat Message History Rendering
+chat_box = st.container()
+with chat_box:
     for msg in st.session_state["sre_chat_messages"]:
         if msg["role"] == "user":
             with st.chat_message("user", avatar="🧑‍💻"):
@@ -2305,22 +2334,41 @@ with chat_container:
             with st.chat_message("assistant", avatar="🧠"):
                 st.markdown(msg["content"])
 
-# User Chat Input
+# User Chat Input Handling (or Quick Prompt trigger)
 user_query = st.chat_input("Ask SRE Copilot (e.g. 'How to mitigate payment connection timeout?', 'Check SLO burn rate')...")
+active_input = quick_prompt or user_query
 
-if user_query:
-    st.session_state["sre_chat_messages"].append({"role": "user", "content": user_query})
+if active_input:
+    st.session_state["sre_chat_messages"].append({"role": "user", "content": active_input})
     with st.chat_message("user", avatar="🧑‍💻"):
-        st.markdown(user_query)
+        st.markdown(active_input)
 
     with st.chat_message("assistant", avatar="🧠"):
-        with st.spinner("Analyzing with Hindsight memory & telemetry context..."):
+        with st.spinner("🧠 Querying Hindsight memory & synthesizing telemetry diagnostics..."):
             try:
                 from app.sre_chat import SRECopilot
+                from app.slo_engine import SLOEngine
+                from app.topology_engine import ServiceTopologyEngine
+
+                # Collect live context
+                t_mgr = TelemetryManager()
+                current_metrics = t_mgr.get_current_metrics()
+                slo_info = SLOEngine.evaluate_slo_status(
+                    error_rate=current_metrics.get("error_rate", 1.2),
+                    api_latency_ms=current_metrics.get("api_latency_ms", 150.0),
+                    request_rate=current_metrics.get("request_rate", 1000.0),
+                )
+                topology_info = ServiceTopologyEngine.calculate_blast_radius("payment-api")
+
                 copilot = SRECopilot()
-                bot_reply = copilot.ask(user_message=user_query)
+                bot_reply = copilot.ask(
+                    user_message=active_input,
+                    live_telemetry=current_metrics,
+                    slo_status=slo_info,
+                    topology_context=topology_info,
+                )
             except Exception as e:
-                bot_reply = f"⚠️ *Error connecting to LLM reasoning engine:* {e}"
+                bot_reply = f"⚠️ *Error connecting to reasoning engine:* {e}"
 
             st.markdown(bot_reply)
             st.session_state["sre_chat_messages"].append({"role": "assistant", "content": bot_reply})
