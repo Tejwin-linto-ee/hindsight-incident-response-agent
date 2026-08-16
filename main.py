@@ -2350,85 +2350,90 @@ with info_col:
     """, unsafe_allow_html=True)
 
 # User Chat Input Handling (or Quick Prompt trigger or Uploaded File trigger)
-user_query = st.chat_input("Ask SRE Copilot or type 'analyze uploaded report'...")
+user_query = st.chat_input("Ask SRE Copilot or upload a crash log...")
 active_input = quick_prompt or user_query
+
+from app.security_validator import SecurityValidator
 
 # If a crash file was just uploaded and user didn't type anything yet
 if uploaded_crash_file is not None and not active_input:
     try:
-        file_content = uploaded_crash_file.read().decode("utf-8", errors="ignore")
-        if len(file_content.strip()) > 0:
+        raw_bytes = uploaded_crash_file.read()
+        is_valid_file, file_val_msg, file_text = SecurityValidator.validate_uploaded_crash_file(
+            filename=uploaded_crash_file.name,
+            file_bytes=raw_bytes,
+        )
+        if not is_valid_file:
+            st.error(f"🚫 {file_val_msg}")
+        elif len(file_text.strip()) > 0:
             if st.button("🔍 Analyze Uploaded Crash Report Now", type="primary", use_container_width=True):
-                # Input sanitization and size truncation
-                sanitized_log = file_content[:4000].replace("<", "&lt;").replace(">", "&gt;")
-                active_input = f"Diagnose this uploaded crash report:\n```\n{sanitized_log}\n```"
+                active_input = f"Diagnose this verified crash report ({uploaded_crash_file.name}):\n```\n{file_text[:3500]}\n```"
     except Exception as read_err:
-        st.error(f"Error parsing uploaded file: {read_err}")
+        st.error(SecurityValidator.mask_error_message(read_err, "Error reading upload."))
 
 if active_input:
-    # ─── 1. INPUT VALIDATION & SANITIZATION ───────────────────────
-    clean_input = active_input.strip()
-    if len(clean_input) < 2:
-        st.warning("⚠️ Input is too short. Please provide a valid diagnostic query or incident description.")
-    elif len(clean_input) > 8000:
-        st.warning("⚠️ Input exceeds 8,000 characters. Truncating for security.")
-        clean_input = clean_input[:8000]
-
-    # ─── 2. USER RATE LIMIT & QUOTA ENFORCEMENT ───────────────────
-    current_username = st.session_state.get("user", {}).get("username", "admin")
-    from app.auth import SecurityManager
-    allowed, quota_msg, quota_info = SecurityManager.check_user_quota_and_consume(current_username)
-
-    if not allowed:
-        st.error(quota_msg)
-        st.session_state["sre_chat_messages"].append({
-            "role": "assistant",
-            "content": f"🔒 **Account Rate-Limited:** {quota_msg}\n\n*Please ask an Administrator to grant additional quota in the Admin Panel.*"
-        })
+    # ─── 1. STRICT SCHEMA INPUT VALIDATION (Reject Invalid) ────────
+    is_valid_input, clean_or_err = SecurityValidator.validate_incident_input(active_input, "Chat query")
+    
+    if not is_valid_input:
+        st.error(f"🚫 {clean_or_err}")
     else:
-        st.session_state["sre_chat_messages"].append({"role": "user", "content": clean_input})
-        with st.chat_message("user", avatar="🧑‍💻"):
-            st.markdown(clean_input)
+        clean_input = clean_or_err
+        # ─── 2. USER RATE LIMIT & QUOTA ENFORCEMENT ───────────────────
+        current_username = st.session_state.get("user", {}).get("username", "admin")
+        from app.auth import SecurityManager
+        allowed, quota_msg, quota_info = SecurityManager.check_user_quota_and_consume(current_username)
 
-        with st.chat_message("assistant", avatar="🧠"):
-            with st.spinner("🧠 Researching crash logs & querying Hindsight organizational memory..."):
-                try:
-                    from app.sre_chat import SRECopilot
-                    from app.slo_engine import SLOEngine
-                    from app.topology_engine import ServiceTopologyEngine
+        if not allowed:
+            st.error(quota_msg)
+            st.session_state["sre_chat_messages"].append({
+                "role": "assistant",
+                "content": f"🔒 **Account Rate-Limited:** {quota_msg}\n\n*Please ask an Administrator to grant additional quota in the Admin Panel.*"
+            })
+        else:
+            st.session_state["sre_chat_messages"].append({"role": "user", "content": clean_input})
+            with st.chat_message("user", avatar="🧑‍💻"):
+                st.markdown(clean_input)
 
-                    # Collect live context safely
+            with st.chat_message("assistant", avatar="🧠"):
+                with st.spinner("🧠 Researching crash logs & querying Hindsight organizational memory..."):
                     try:
-                        t_mgr = TelemetryManager()
-                        if hasattr(t_mgr, "get_current_metrics"):
-                            current_metrics = t_mgr.get_current_metrics()
-                        elif hasattr(t_mgr, "current") and t_mgr.current() is not None:
-                            current_metrics = t_mgr.current()
-                        else:
+                        from app.sre_chat import SRECopilot
+                        from app.slo_engine import SLOEngine
+                        from app.topology_engine import ServiceTopologyEngine
+
+                        # Collect live context safely
+                        try:
+                            t_mgr = TelemetryManager()
+                            if hasattr(t_mgr, "get_current_metrics"):
+                                current_metrics = t_mgr.get_current_metrics()
+                            elif hasattr(t_mgr, "current") and t_mgr.current() is not None:
+                                current_metrics = t_mgr.current()
+                            else:
+                                current_metrics = {"cpu_percent": 45.0, "memory_percent": 50.0, "error_rate": 1.2, "api_latency_ms": 150.0, "request_rate": 1000.0}
+                        except Exception:
                             current_metrics = {"cpu_percent": 45.0, "memory_percent": 50.0, "error_rate": 1.2, "api_latency_ms": 150.0, "request_rate": 1000.0}
-                    except Exception:
-                        current_metrics = {"cpu_percent": 45.0, "memory_percent": 50.0, "error_rate": 1.2, "api_latency_ms": 150.0, "request_rate": 1000.0}
 
-                    slo_info = SLOEngine.evaluate_slo_status(
-                        error_rate=current_metrics.get("error_rate", 1.2),
-                        api_latency_ms=current_metrics.get("api_latency_ms", 150.0),
-                        request_rate=current_metrics.get("request_rate", 1000.0),
-                    )
-                    topology_info = ServiceTopologyEngine.calculate_blast_radius("payment-api")
+                        slo_info = SLOEngine.evaluate_slo_status(
+                            error_rate=current_metrics.get("error_rate", 1.2),
+                            api_latency_ms=current_metrics.get("api_latency_ms", 150.0),
+                            request_rate=current_metrics.get("request_rate", 1000.0),
+                        )
+                        topology_info = ServiceTopologyEngine.calculate_blast_radius("payment-api")
 
-                    copilot = SRECopilot()
-                    bot_reply = copilot.ask(
-                        user_message=clean_input,
-                        live_telemetry=current_metrics,
-                        slo_status=slo_info,
-                        topology_context=topology_info,
-                    )
-                except Exception as e:
-                    bot_reply = f"⚠️ *Error connecting to reasoning engine:* {e}"
+                        copilot = SRECopilot()
+                        bot_reply = copilot.ask(
+                            user_message=clean_input,
+                            live_telemetry=current_metrics,
+                            slo_status=slo_info,
+                            topology_context=topology_info,
+                        )
+                    except Exception as e:
+                        bot_reply = f"⚠️ {SecurityValidator.mask_error_message(e, 'Diagnostic reasoning engine unavailable.')}"
 
-                st.markdown(bot_reply)
-                st.session_state["sre_chat_messages"].append({"role": "assistant", "content": bot_reply})
-                st.rerun()
+                    st.markdown(bot_reply)
+                    st.session_state["sre_chat_messages"].append({"role": "assistant", "content": bot_reply})
+                    st.rerun()
 
 st.divider()
 
